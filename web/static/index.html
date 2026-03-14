@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bandwidth Test Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-icon" aria-hidden="true">◉</span>
+        <span class="brand-text">Netperf</span>
+      </div>
+      <nav class="sidebar-nav" role="navigation">
+        <a href="#" class="nav-item active" data-view="dashboard">
+          <span class="nav-icon">▣</span>
+          <span class="nav-label">Dashboard</span>
+        </a>
+        <a href="#" class="nav-item" data-view="scheduler">
+          <span class="nav-icon">◷</span>
+          <span class="nav-label">Scheduler</span>
+        </a>
+        <a href="#" class="nav-item" data-view="settings">
+          <span class="nav-icon">⚙</span>
+          <span class="nav-label">Settings</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="scheduler-badge" id="scheduler-badge" title="Scheduler status">
+          <span class="badge-dot"></span>
+          <span class="badge-text" id="scheduler-badge-text">—</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="page-header">
+        <h1 class="page-title" id="page-title">Dashboard</h1>
+      </header>
+
+      <section id="view-dashboard" class="view view-active">
+        <div class="card filters-card">
+          <h2 class="card-title">Reports</h2>
+          <p class="card-description">Select a date and metric to view speedtest results.</p>
+          <div class="form-row">
+            <div class="field">
+              <label for="date-select">Date</label>
+              <select id="date-select" class="input">
+                <option value="">Select date…</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="metric-select">Metric</label>
+              <select id="metric-select" class="input">
+                <option value="download_bps">Download</option>
+                <option value="upload_bps">Upload</option>
+                <option value="latency_ms">Latency</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="card chart-card">
+          <div class="card-header">
+            <h2 class="card-title">Overview</h2>
+            <p class="card-hint">Click a series in the legend to show or hide it.</p>
+          </div>
+          <div class="chart-container chart-container--master">
+            <canvas id="chart-master"></canvas>
+          </div>
+          <div id="chart-master-empty" class="empty-state">
+            <p>Select a date above to load data.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">By site</h2>
+          <div id="per-site-charts" class="per-site-grid"></div>
+          <div id="per-site-empty" class="empty-state">
+            <p>No per-site data until you select a date with results.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-scheduler" class="view">
+        <div class="card card--scheduler">
+          <h2 class="card-title">Hourly test schedule</h2>
+          <p class="card-description">Tests run at minute 5 of every hour. Results are stored under <code>/var/log/netperf/YYYYMMDD</code>.</p>
+          <div class="scheduler-status-block">
+            <div class="status-row">
+              <span class="status-label">Status</span>
+              <span class="status-value" id="scheduler-status">—</span>
+            </div>
+            <div class="button-group">
+              <button type="button" class="btn btn-primary" id="btn-scheduler-start">Start schedule</button>
+              <button type="button" class="btn btn-secondary" id="btn-scheduler-stop">Stop schedule</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view">
+        <div class="card">
+          <h2 class="card-title">Configuration</h2>
+          <p class="card-description">Edit Ookla and iperf servers and optional speed limit. Changes take effect on the next test run.</p>
+
+          <div class="form-block">
+            <label class="field-label">Speedtest limit (Mbps)</label>
+            <p class="field-hint">Optional. Cap speedtest at this many Mbps (uses <code>trickle</code> if installed). Leave empty for no limit.</p>
+            <input type="number" id="config-limit-mbps" class="input input--number" min="1" step="1" placeholder="No limit">
+          </div>
+
+          <div class="form-block">
+            <label class="field-label">Ookla Speedtest servers</label>
+            <p class="field-hint">JSON array. Use <code>"id": "auto"</code> for auto-selected server.</p>
+            <textarea id="config-ookla" class="input input--code" rows="10" spellcheck="false"></textarea>
+          </div>
+
+          <div class="form-block">
+            <label class="field-label">iperf3 servers</label>
+            <textarea id="config-iperf-servers" class="input input--code" rows="5" spellcheck="false"></textarea>
+          </div>
+
+          <div class="form-block">
+            <label class="field-label">iperf3 tests</label>
+            <textarea id="config-iperf-tests" class="input input--code" rows="5" spellcheck="false"></textarea>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-primary" id="btn-save-config">Save configuration</button>
+            <p id="config-message" class="form-message hidden"></p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <div id="loading-overlay" class="loading-overlay hidden" aria-hidden="true"><div class="spinner"></div></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

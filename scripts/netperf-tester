@@ -1,0 +1,99 @@
+#!/bin/bash
+set -eu
+
+### Root check ###
+if [ "$(id -u)" -ne 0 ]; then
+	echo -e "\nMUST BE RUN AS ROOT!\n"; exit 1
+fi
+
+### Variables ###
+STORAGE_LOCATION="${1:-}"
+CONFIG_FILE="${NETPERF_CONFIG:-/etc/netperf/config.json}"
+
+### Process input options ###
+process_arguments() {
+	if [ -z "${STORAGE_LOCATION:-}" ]; then
+		echo -e "\nIncorrect input.\n"; HELP ; exit 1;
+	fi
+
+	case "${STORAGE_LOCATION:-}" in
+		-h|help|-help|--help|/?) HELP ; exit 0;;
+		*) ;;
+	esac
+}
+
+### Help subroutine ###
+HELP() {
+	echo -e "Script to run the netperf programs iPerf and Ookla Speedtest CLI."
+	echo -e "Uses server list from: $CONFIG_FILE"
+	echo -e "\nSyntax: netperf-tester [STORAGE_LOCATION|h]"
+	echo -e "options:"
+	echo -e "h\t\tShow this help."
+	echo
+}
+
+### Start subroutine ###
+START() {
+	if [ ! -d "$STORAGE_LOCATION" ]; then
+		mkdir -p "$STORAGE_LOCATION"
+	fi
+
+	if [ ! -f "$CONFIG_FILE" ]; then
+		echo -e "ERROR: Config not found: $CONFIG_FILE\n"; exit 1
+	fi
+
+	if ! command -v jq >/dev/null 2>&1; then
+		echo -e "ERROR: jq is required to read config.\n"; exit 1
+	fi
+
+	# Optional speed limit in Mbps (applied via trickle if available)
+	LIMIT_MBPS=$(jq -r '.speedtest_limit_mbps // empty' "$CONFIG_FILE")
+	SPEEDTEST_CMD="speedtest"
+	if [ -n "$LIMIT_MBPS" ] && [ "$LIMIT_MBPS" != "null" ]; then
+		# trickle uses KB/s: Mbps * 1000 / 8 = KB/s
+		LIMIT_KBPS=$(awk "BEGIN { printf \"%.0f\", ($LIMIT_MBPS * 1000) / 8 }")
+		if command -v trickle >/dev/null 2>&1; then
+			SPEEDTEST_CMD="trickle -d $LIMIT_KBPS -u $LIMIT_KBPS speedtest"
+		fi
+	fi
+
+	# Ookla Speedtest: run each server from config
+	idx=0
+	while true; do
+		id=$(jq -r --argjson i "$idx" '.ookla_servers[$i].id // empty' "$CONFIG_FILE")
+		label=$(jq -r --argjson i "$idx" '.ookla_servers[$i].label // empty' "$CONFIG_FILE")
+		[ -z "$id" ] && break
+		outfile="$STORAGE_LOCATION/${idx}_speedtest-$(echo "$label" | tr '[:upper:]' '[:lower:]')"
+		if [ "$id" = "auto" ]; then
+			$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+		else
+			$SPEEDTEST_CMD -s "$id" -f json >> "$outfile" 2>/dev/null || true
+		fi
+		sleep 10
+		idx=$((idx + 1))
+	done
+
+	# iperf3: run each server × each test from config
+	server_idx=0
+	while true; do
+		host=$(jq -r --argjson i "$server_idx" '.iperf_servers[$i].host // empty' "$CONFIG_FILE")
+		slabel=$(jq -r --argjson i "$server_idx" '.iperf_servers[$i].label // empty' "$CONFIG_FILE")
+		[ -z "$host" ] && break
+		test_idx=0
+		while true; do
+			tname=$(jq -r --argjson i "$test_idx" '.iperf_tests[$i].name // empty' "$CONFIG_FILE")
+			targs=$(jq -r --argjson i "$test_idx" '.iperf_tests[$i].args // empty' "$CONFIG_FILE")
+			[ -z "$tname" ] && break
+			outfile="$STORAGE_LOCATION/iperf-${slabel}-${tname}.txt"
+			iperf3 --timestamp -c "$host" $targs >> "$outfile" 2>/dev/null || true
+			sleep 10
+			test_idx=$((test_idx + 1))
+		done
+		server_idx=$((server_idx + 1))
+	done
+
+	exit 0
+}
+
+process_arguments "$@"
+START

@@ -1,0 +1,62 @@
+#!/bin/bash
+set -eu
+
+### Root check ###
+if [ "$(id -u)" -ne 0 ]; then
+	echo -e "\nMUST BE RUN AS ROOT!\n"; exit 1
+fi
+
+### Variables ###
+START_DATE="$(date +%Y%m%d)"
+STORAGE_LOCATION="/var/log/netperf/$START_DATE"
+CRON_JOB="5 * * * * /bin/netperf-tester $STORAGE_LOCATION"
+
+### Process input options ###
+process_arguments() {
+	if [ -z "${1:-}" ]; then
+		echo -e "\nIncorrect input.\n"; HELP ; exit 1
+	fi
+
+	case "$1" in
+		-h|help|-help|--help|/?) HELP; exit 0;;
+		start|-start|--start) START;;
+		stop|-stop|--stop) STOP;;
+		*) echo -e "\nIncorrect input.\n"; HELP; exit 1;;
+	esac
+}
+
+### Help subroutine ###
+HELP() {
+	echo -e "Script to enable/disable automated and logged speed testing."
+	echo -e "\nSyntax: netperf-scheduler [start|stop|h]"
+	echo -e "options:"
+	echo -e "\tstart\tStart speed test logging"
+	echo -e "\tstop\tStop the speed test logging"
+	echo -e "\th\t\tShow this help."
+	echo
+}
+
+### Start subroutine ###
+START() {
+	if crontab -l 2>/dev/null | grep -v '^[[:space:]]*#' | grep -q "netperf"; then
+		echo -e "\nnetperf is already scheduled.\n"
+		echo -e "\nRun 'netperf-scheduler stop' before starting again.\n"
+		exit 1
+	fi
+
+	mkdir -p "$STORAGE_LOCATION"
+	(crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
+	systemctl restart cron.service 2>/dev/null || true
+	systemctl restart crond.service 2>/dev/null || true
+	echo -e "\nnetperf scheduled successfully.\n"
+}
+
+### Stop subroutine ###
+STOP() {
+	(crontab -l 2>/dev/null | sed '/netperf/d' || true) | crontab -
+	systemctl restart cron.service 2>/dev/null || true
+	systemctl restart crond.service 2>/dev/null || true
+	echo -e "\nnetperf schedule removed.\n"
+}
+
+process_arguments "$@"

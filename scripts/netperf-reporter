@@ -1,0 +1,162 @@
+#!/bin/bash
+set -euo pipefail
+
+### Root check ###
+if [ "$(id -u)" -ne 0 ]; then
+	echo -e "\nMUST BE RUN AS ROOT!\n"; exit 1
+fi
+
+### Variables ###
+TEST_TYPE="${1:-}"
+STORAGE_LOCATION="${2:-}"
+STORAGE_LOCATION="${STORAGE_LOCATION%/}"
+REPORT_DATE="$(date +%Y%m%d)"
+# LOCATIONS discovered from filenames below (see REPORT_SPEEDTEST)
+
+### Process input options ###
+process_arguments() {
+	if [ -z "${TEST_TYPE:-}" ] || [ -z "${STORAGE_LOCATION:-}" ]; then
+		echo -e "\nIncorrect input.\n"; HELP; exit 1
+	fi
+
+	case "$TEST_TYPE" in
+		-h|help|-help|--help|/?) HELP; exit 0;;
+		-s|speedtest|-speedtest|--speedtest) REPORT_SPEEDTEST;;
+		-i|iperf|-iperf|--iperf) REPORT_IPERF;;
+		*) echo -e "\nIncorrect input.\n"; HELP; exit 1;;
+	esac
+}
+
+### Help subroutine ###
+HELP() {
+	echo -e "Script to parse and combine output from netperf tests."
+	echo -e "\nSyntax: netperf-reporter [speedtest|iperf] [STORAGE_LOCATION]"
+	echo -e "options:"
+	echo -e "\tspeedtest\tGenerate a report from speedtest data"
+	echo -e "\tiperf\t\tGenerate a report from iperf data"
+	echo -e "\th\t\tShow this help."
+	echo
+}
+
+### Speedtest report subroutine ###
+REPORT_SPEEDTEST() {
+
+	if [ ! -d "$STORAGE_LOCATION" ]; then
+		echo -e "ERROR: STORAGE_LOCATION does not exist: $STORAGE_LOCATION\n"; exit 1
+	fi
+
+	BASE_OUTFILE="$STORAGE_LOCATION/netperf-report-$REPORT_DATE"
+	COUNTER=1
+	while :; do
+		OUTFILE=$(printf "%s_%02d.csv" "$BASE_OUTFILE" "$COUNTER")
+		[ ! -e "$OUTFILE" ] && break
+		COUNTER=$((COUNTER + 1))
+	done
+
+	if ! command -v jq >/dev/null 2>&1; then
+		echo -e "ERROR: jq is required but not found in PATH.\n"; exit 1
+	fi
+
+	shopt -s nullglob
+	speedtest_files=("$STORAGE_LOCATION"/[0-9]_speedtest-*)
+	shopt -u nullglob
+
+	if [ "${#speedtest_files[@]}" -eq 0 ]; then
+		echo -e "Speedtest files not in selected directory\n"; exit 1
+	fi
+
+	# Discover location labels from filenames (e.g. 0_speedtest-local -> LOCAL), sorted by index
+	LOCATIONS=()
+	for f in "${speedtest_files[@]}"; do
+		loc="$(basename "$f" \
+			| sed -E 's/^[0-9]+_speedtest-([A-Za-z0-9]+).*$/\1/' \
+			| tr '[:lower:]' '[:upper:]')"
+		LOCATIONS+=("$loc")
+	done
+
+	HEADER="\"hour\""
+	COLS="\"hour\""
+
+	for loc in "${LOCATIONS[@]}"; do
+		HEADER+=",\"\",\"${loc}_server_id\",\"${loc}_latency_ms\",\"${loc}_download_bps\",\"${loc}_upload_bps\""
+		COLS+=",\"${loc}_server_id\",\"${loc}_latency_ms\",\"${loc}_download_bps\",\"${loc}_upload_bps\""
+	done
+
+	printf "%s\n" "$HEADER" > "$OUTFILE"
+
+	(
+		for f in "${speedtest_files[@]}"; do
+
+			[ -f "$f" ] || continue
+
+			loc="$(basename "$f" \
+				| sed -E 's/^[0-9]+_speedtest-([A-Za-z0-9]+).*$/\1/' \
+				| tr '[:lower:]' '[:upper:]')"
+
+			jq -c --arg loc "$loc" '
+				select(.type == "result")
+				| {
+					loc: $loc,
+					ts: .timestamp,
+					hour: (.timestamp
+						| sub("T"; " ")
+						| sub(":[0-9]{2}:[0-9]{2}Z$"; ":00")
+					),
+					server_id: (
+						(.server.id // "ND" | tostring)
+						+ " "
+						+ (.server.name // "ND" | tostring)
+						+ " "
+						+ (.server.location // "ND" | tostring)
+					),
+					latency_ms: (.ping.latency // null),
+					download_bps: ((.download.bandwidth // 0) * 8),
+					upload_bps: ((.upload.bandwidth // 0) * 8)
+				}
+			' "$f"
+
+		done
+	) | jq -sr --argjson cols "[$COLS]" '
+
+		def chunk($n):
+			[range(0; length; $n) as $i | .[$i:($i+$n)]];
+
+		sort_by(.ts)
+		| group_by([.hour, .loc])
+		| map(.[-1])
+		| sort_by(.hour)
+		| group_by(.hour)
+		| map(
+			{hour: .[0].hour}
+			+ (reduce .[] as $r ({}; . + {
+				($r.loc + "_server_id"): $r.server_id,
+				($r.loc + "_latency_ms"): $r.latency_ms,
+				($r.loc + "_download_bps"): $r.download_bps,
+				($r.loc + "_upload_bps"): $r.upload_bps
+			}))
+		)
+		| .[]
+		| . as $row
+		| (
+			[ $row.hour ]
+			+ (
+				($cols[1:] | chunk(4))
+				| map([""] + [ .[] as $c | ($row[$c] // "ND") ])
+				| add
+			)
+		)
+		| map(tostring)
+		| @csv
+
+	' >> "$OUTFILE"
+
+	echo -e "\nSpeedtest report generated: $OUTFILE\n"
+	tail -n +2 $OUTFILE
+}
+
+### iperf report subroutine ###
+REPORT_IPERF() {
+	echo -e "\niperf reporting not implemented yet\n"
+}
+
+process_arguments "$@"

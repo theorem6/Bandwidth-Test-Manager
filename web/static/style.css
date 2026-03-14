@@ -1,0 +1,638 @@
+/* ==========================================================================
+   Bandwidth Test Manager – Design system & layout
+   ========================================================================== */
+
+:root {
+  /* Colors – dark theme */
+  --bg-base: #0c0f14;
+  --bg-elevated: #13171e;
+  --bg-surface: #1a1f28;
+  --bg-hover: #222830;
+  --border-subtle: #2a313c;
+  --border-default: #363e4b;
+  --text-primary: #f0f2f5;
+  --text-secondary: #9ca3b4;
+  --text-muted: #6b7280;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-muted: rgba(99, 102, 241, 0.15);
+  --success: #22c55e;
+  --success-muted: rgba(34, 197, 94, 0.15);
+  --danger: #ef4444;
+  --danger-muted: rgba(239, 68, 68, 0.15);
+  --warning: #eab308;
+
+  /* Typography */
+  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.35);
+
+  /* Sidebar */
+  --sidebar-width: 240px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  min-height: 100vh;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-hover);
+  padding: 0.15em 0.4em;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   App shell
+   ========================================================================== */
+
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ==========================================================================
+   Sidebar
+   ========================================================================== */
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  z-index: 50;
+}
+
+.sidebar-brand {
+  padding: var(--space-6) var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.brand-icon {
+  font-size: 1.5rem;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.brand-text {
+  font-weight: 700;
+  font-size: 1.125rem;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: var(--space-4) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.nav-icon {
+  font-size: 1.125rem;
+  opacity: 0.9;
+}
+
+.sidebar-footer {
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.scheduler-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.scheduler-badge.is-active .badge-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 2px var(--success-muted);
+}
+
+.scheduler-badge.is-active .badge-text {
+  color: var(--success);
+}
+
+/* ==========================================================================
+   Main content
+   ========================================================================== */
+
+.main {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  min-width: 0;
+  padding: var(--space-8) var(--space-10);
+  max-width: 1400px;
+}
+
+.page-header {
+  margin-bottom: var(--space-8);
+}
+
+.page-title {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+/* ==========================================================================
+   Views
+   ========================================================================== */
+
+.view {
+  display: none;
+}
+
+.view.view-active {
+  display: block;
+}
+
+.view > .card + .card {
+  margin-top: var(--space-8);
+}
+
+/* ==========================================================================
+   Cards
+   ========================================================================== */
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-title {
+  margin: 0 0 var(--space-2);
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.card-description {
+  margin: 0 0 var(--space-5);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.card-header .card-title {
+  margin-bottom: 0;
+}
+
+.card-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Forms
+   ========================================================================== */
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  align-items: flex-end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 160px;
+}
+
+.field label,
+.field-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.field-hint {
+  margin: 0 0 var(--space-2);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.input {
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input--number {
+  width: 100%;
+  max-width: 8rem;
+}
+
+.input--code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 120px;
+}
+
+.form-block {
+  margin-bottom: var(--space-6);
+}
+
+.form-block .field-label {
+  display: block;
+  margin-bottom: var(--space-2);
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-top: var(--space-6);
+}
+
+.form-message {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.form-message.hidden {
+  display: none;
+}
+
+.form-message.success {
+  color: var(--success);
+}
+
+.form-message.error {
+  color: var(--danger);
+}
+
+/* ==========================================================================
+   Buttons
+   ========================================================================== */
+
+.btn {
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  padding: var(--space-3) var(--space-5);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:not(:disabled):active {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--border-subtle);
+}
+
+.button-group {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   Scheduler page
+   ========================================================================== */
+
+.scheduler-status-block {
+  margin-top: var(--space-4);
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.status-label {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.status-value {
+  font-weight: 500;
+  font-size: 0.9375rem;
+}
+
+.status-value.active {
+  color: var(--success);
+}
+
+.status-value.inactive {
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Charts
+   ========================================================================== */
+
+.chart-container {
+  position: relative;
+  height: 360px;
+  width: 100%;
+}
+
+.chart-container--master {
+  min-height: 320px;
+}
+
+.chart-card {
+  position: relative;
+}
+
+.chart-card .chart-container {
+  margin-top: var(--space-4);
+}
+
+.chart-card .empty-state {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+
+.per-site-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-6);
+  margin-top: var(--space-4);
+}
+
+.per-site-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+}
+
+.per-site-card .card-title {
+  font-size: 1rem;
+  margin-bottom: var(--space-4);
+}
+
+.per-site-chart-wrap {
+  position: relative;
+  height: 200px;
+}
+
+.empty-state {
+  padding: var(--space-8);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-4);
+}
+
+.empty-state.hidden {
+  display: none;
+}
+
+/* ==========================================================================
+   Toast & loading
+   ========================================================================== */
+
+.toast {
+  position: fixed;
+  bottom: var(--space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  z-index: 200;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.toast.hidden {
+  display: none;
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+
+.toast.success {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.toast.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 15, 20, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 150;
+}
+
+.loading-overlay.hidden {
+  display: none;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-default);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .sidebar {
+    width: 72px;
+    padding: 0;
+  }
+
+  .sidebar-brand .brand-text,
+  .nav-label,
+  .scheduler-badge .badge-text {
+    display: none;
+  }
+
+  .sidebar-brand {
+    justify-content: center;
+    padding: var(--space-4);
+  }
+
+  .nav-item {
+    justify-content: center;
+    padding: var(--space-4);
+  }
+
+  .main {
+    margin-left: 72px;
+    padding: var(--space-6);
+  }
+
+  .form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .field {
+    min-width: 0;
+  }
+}

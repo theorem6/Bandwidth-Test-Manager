@@ -1,0 +1,18 @@
+{
+  "speedtest_limit_mbps": null,
+  "ookla_servers": [
+    { "id": "auto", "label": "Local" },
+    { "id": 10171, "label": "FL" },
+    { "id": 53398, "label": "IL" },
+    { "id": 58326, "label": "NC" },
+    { "id": 8864, "label": "WA" }
+  ],
+  "iperf_servers": [
+    { "host": "9000.mtu.he.net", "label": "he-net" }
+  ],
+  "iperf_tests": [
+    { "name": "single", "args": "-P 1" },
+    { "name": "multi", "args": "-P 8" },
+    { "name": "udp", "args": "-u -b 1G" }
+  ]
+}
