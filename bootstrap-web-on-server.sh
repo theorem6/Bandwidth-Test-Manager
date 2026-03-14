@@ -8,8 +8,8 @@ export DEBIAN_FRONTEND=noninteractive
 WEB_DIR="/opt/netperf-web"
 WEB_PORT="${PORT:-8080}"
 
-if [ ! -f "$WEB_DIR/app.py" ]; then
-  echo "Missing $WEB_DIR/app.py. Copy web app to /opt/netperf-web first."
+if [ ! -f "$WEB_DIR/main.py" ]; then
+  echo "Missing $WEB_DIR/main.py. Copy web app to /opt/netperf-web first."
   exit 1
 fi
 
@@ -22,7 +22,7 @@ fi
 rm -rf "$WEB_DIR/venv"
 python3 -m venv "$WEB_DIR/venv"
 "$WEB_DIR/venv/bin/pip" install -q -r "$WEB_DIR/requirements.txt"
-chmod 755 "$WEB_DIR/app.py"
+chmod 755 "$WEB_DIR/main.py"
 
 cat > /etc/systemd/system/netperf-web.service << EOF
 [Unit]
@@ -32,7 +32,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$WEB_DIR
-ExecStart=$WEB_DIR/venv/bin/python $WEB_DIR/app.py
+ExecStart=$WEB_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $WEB_PORT
 Restart=on-failure
 Environment=NETPERF_STORAGE=/var/log/netperf
 Environment=NETPERF_CONFIG=/etc/netperf/config.json

@@ -8,17 +8,29 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
-app = Flask(__name__, static_folder="static", static_url_path="")
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 STORAGE = Path(os.environ.get("NETPERF_STORAGE", "/var/log/netperf"))
 CONFIG_PATH = Path(os.environ.get("NETPERF_CONFIG", "/etc/netperf/config.json"))
 
 
 def get_config():
+    defaults = {
+        "site_url": "",
+        "ssl_cert_path": "",
+        "ssl_key_path": "",
+        "ookla_servers": [],
+        "iperf_servers": [],
+        "iperf_tests": [],
+    }
     if not CONFIG_PATH.exists():
-        return {"ookla_servers": [], "iperf_servers": [], "iperf_tests": []}
+        return defaults
     with open(CONFIG_PATH, "r") as f:
-        return json.load(f)
+        data = json.load(f)
+    for k, v in defaults.items():
+        if k not in data:
+            data[k] = v
+    return data
 
 
 def save_config(data):
@@ -92,6 +104,8 @@ def site_label_from_iperf_filename(name):
 
 
 @app.route("/")
+@app.route("/netperf")
+@app.route("/netperf/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
 
@@ -108,6 +122,9 @@ def api_config_set():
     if "speedtest_limit_mbps" in data:
         v = data["speedtest_limit_mbps"]
         cur["speedtest_limit_mbps"] = int(v) if v is not None and str(v).strip() != "" else None
+    for key in ("site_url", "ssl_cert_path", "ssl_key_path"):
+        if key in data:
+            cur[key] = (data.get(key) or "").strip()
     cur["ookla_servers"] = data.get("ookla_servers", cur.get("ookla_servers", []))
     cur["iperf_servers"] = data.get("iperf_servers", cur.get("iperf_servers", []))
     cur["iperf_tests"] = data.get("iperf_tests", cur.get("iperf_tests", []))
@@ -120,35 +137,41 @@ def api_config_set():
 
 @app.route("/api/dates")
 def api_dates():
-    if not STORAGE.exists():
+    try:
+        if not STORAGE.exists():
+            return jsonify({"dates": []})
+        dates = sorted(
+            [d.name for d in STORAGE.iterdir() if d.is_dir() and d.name.isdigit()],
+            reverse=True,
+        )
+        return jsonify({"dates": dates})
+    except Exception:
         return jsonify({"dates": []})
-    dates = sorted(
-        [d.name for d in STORAGE.iterdir() if d.is_dir() and d.name.isdigit()],
-        reverse=True,
-    )
-    return jsonify({"dates": dates})
 
 
 @app.route("/api/data")
 def api_data():
-    date = request.args.get("date")
-    if not date or not date.isdigit():
-        return jsonify({"error": "missing or invalid date"}), 400
-    day_dir = STORAGE / date
-    if not day_dir.exists() or not day_dir.is_dir():
+    try:
+        date = request.args.get("date")
+        if not date or not date.isdigit():
+            return jsonify({"error": "missing or invalid date"}), 400
+        day_dir = STORAGE / date
+        if not day_dir.exists() or not day_dir.is_dir():
+            return jsonify({"speedtest": {}, "iperf": {}})
+
+        speedtest = {}
+        for f in sorted(day_dir.glob("[0-9]_speedtest-*")):
+            label = site_label_from_speedtest_filename(f.name)
+            speedtest[label] = parse_speedtest_file(f)
+
+        iperf = {}
+        for f in sorted(day_dir.glob("iperf-*.txt")):
+            label = site_label_from_iperf_filename(f.name)
+            iperf[label] = parse_iperf_file(f)
+
+        return jsonify({"speedtest": speedtest, "iperf": iperf})
+    except Exception:
         return jsonify({"speedtest": {}, "iperf": {}})
-
-    speedtest = {}
-    for f in sorted(day_dir.glob("[0-9]_speedtest-*")):
-        label = site_label_from_speedtest_filename(f.name)
-        speedtest[label] = parse_speedtest_file(f)
-
-    iperf = {}
-    for f in sorted(day_dir.glob("iperf-*.txt")):
-        label = site_label_from_iperf_filename(f.name)
-        iperf[label] = parse_iperf_file(f)
-
-    return jsonify({"speedtest": speedtest, "iperf": iperf})
 
 
 @app.route("/api/status")
@@ -158,10 +181,10 @@ def api_status():
             ["crontab", "-l"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=3,
         )
-        scheduled = "netperf" in (out.stdout or "") and "netperf" in (out.stdout or "").replace(" ", "")
-    except Exception:
+        scheduled = "netperf" in (out.stdout or "")
+    except (subprocess.TimeoutExpired, Exception):
         scheduled = False
     return jsonify({"scheduled": scheduled})
 

@@ -24,6 +24,9 @@ if ! gcloud compute instances describe "$INSTANCE" "${GCLOUD_EXTRA[@]}" &>/dev/n
   exit 1
 fi
 
+echo "=== Building frontend (Svelte) ==="
+(cd "$SCRIPT_DIR/web/frontend" && npm run build 2>/dev/null) || echo "Skip frontend build (run: cd web/frontend && npm run build)"
+
 echo "=== Copying project to instance ==="
 tar czf - -C "$SCRIPT_DIR" scripts etc web install.sh finish-web-install.sh bootstrap-web-on-server.sh | \
   gcloud compute ssh "$INSTANCE" "${GCLOUD_EXTRA[@]}" -- "mkdir -p $REMOTE_DIR && tar xzf - -C $REMOTE_DIR"
@@ -61,7 +64,7 @@ else
 fi
 
 # Ensure web UI is up (idempotent: creates venv + systemd unit if missing)
-if [ -f "$REMOTE_DIR/finish-web-install.sh" ] && [ -f /opt/netperf-web/app.py ]; then
+if [ -f "$REMOTE_DIR/finish-web-install.sh" ] && [ -f /opt/netperf-web/main.py ]; then
   sudo PORT="$PORT" bash "$REMOTE_DIR/finish-web-install.sh" || sudo PORT="$PORT" bash "$REMOTE_DIR/bootstrap-web-on-server.sh"
 fi
 
@@ -72,6 +75,7 @@ REMOTE
 echo ""
 echo "=== Deploy complete ==="
 echo "On the server: sudo netperf-scheduler start   # optional: schedule hourly tests"
-echo "Web UI: open http://<instance-external-ip>:8080 (or :8081 if 8080 was in use)"
+echo "Web UI: open the Site URL (no port), e.g. https://<host>/netperf/"
+echo "        Set Site URL and cert paths in Settings; run: sudo ./web/setup-https.sh"
 echo "To get external IP: gcloud compute instances describe $INSTANCE ${GCLOUD_EXTRA[*]} --format='get(networkInterfaces[0].accessConfigs[0].natIP)'"
 exit 0

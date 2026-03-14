@@ -1,0 +1,12 @@
+# Optional: allow the web app user to run netperf tests without a password
+# so "Run test now" works when netperf-web.service runs as non-root.
+#
+# Copy to /etc/sudoers.d/netperf-web (no .example) and fix the USER:
+#   sudo cp etc/sudoers.d-netperf.example /etc/sudoers.d/netperf-web
+#   sudo visudo -c -f /etc/sudoers.d/netperf-web
+# Replace 'www-data' with the User= from your systemd service if different.
+#
+# Default install runs netperf-web as root, so this is not required unless
+# you set User= in the systemd override.
+
+www-data ALL=(root) NOPASSWD: /bin/netperf-cron-run, /bin/netperf-tester *

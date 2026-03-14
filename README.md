@@ -1,6 +1,6 @@
 # Bandwidth Test Manager
 
-Linux-based speedtest utility using **Ookla Speedtest CLI** and **iperf3**, with configurable sites, optional scheduling, CSV reporting, and a **web UI** with per-site and master graphs.
+Linux-based speedtest utility using **Ookla Speedtest CLI** and **iperf3**, with configurable sites, optional scheduling, CSV reporting, and a **web UI** with per-site and master graphs. **Outgoing only:** the app runs tests from this server to external speedtest/iperf servers; it does not host a speedtest or iperf server for others.
 
 See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and usage.
 
@@ -13,40 +13,61 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
    Use `sudo ./install.sh --no-web` to skip the web interface.
 
 2. **Configure sites** (optional)  
-   Edit `/etc/netperf/config.json` to choose which Ookla servers and iperf3 hosts/tests to run, or use **Settings** in the web UI.
+   Edit `/etc/netperf/config.json` or use **Settings** in the web UI to choose Ookla servers, iperf3 hosts/tests, and cron schedule.
 
 3. **Start/stop scheduled testing**
    ```bash
-   sudo netperf-scheduler start   # run tests at :05 every hour, log under /var/log/netperf/YYYYMMDD
-   sudo netperf-scheduler stop    # remove schedule
+   sudo netperf-scheduler start   # run tests per cron_schedule in config (default :05 every hour), log under /var/log/netperf/YYYYMMDD
+   sudo netperf-scheduler stop     # remove schedule
    ```
+   Or use **Scheduler** in the web UI to start/stop. The cron schedule is configurable in **Settings** (e.g. `5 * * * *`).
 
 4. **Web interface** (if installed)
-   - Open `http://<host>:8080`
-   - Pick a date and metric (download/upload/latency)
-   - **Master graph:** all sites; click legend to toggle a site on/off
-   - **Per-site graphs:** one chart per site
-   - **Settings:** edit Ookla and iperf sites and save config
+   - Open the **Site URL** from Settings (e.g. `https://your-server.netperf/`). Use HTTPS with no port in the URL; run `sudo ./web/setup-https.sh` on the server once to enable it.
+   - **Setup:** view backend status. Installation is done via the **install script** when you deploy; use **Install / fix dependencies** only if you need to repair or install on a server that wasn’t set up with the script.
+   - **Dashboard:** pick a date and metric; graphs show real test results. Use **Run test now** (admin) or the **Scheduler** to run Ookla and iperf3 tests; data is written to `/var/log/netperf/YYYYMMDD/` and shown in the UI.
+   - **Scheduler:** start or stop the hourly test cron.
+   - **Settings:** site URL, SSL paths, speed limit, cron schedule, Ookla/iperf servers and tests.
 
 5. **Generate speedtest report** (CLI, after some runs)
    ```bash
    sudo netperf-reporter -s /var/log/netperf/YYYYMMDD
    ```
 
-## Deploy to Google Compute Engine (GCE)
+## Web UI (Svelte + TypeScript)
 
-From your **local machine** (where `gcloud` is installed), deploy to an existing Linux (Debian/Ubuntu) GCE instance without overwriting existing config:
+The UI is built with **Svelte**, **TypeScript**, and **Vite**. Before deploying (or to refresh the UI), build the frontend:
 
+```bash
+cd web/frontend && npm install && npm run build
+```
+
+This writes the app into `web/static/`. The FastAPI backend serves it at `/` and `/static/`.
+
+## One-server deployment (GCE)
+
+Deploy to a GCE instance: the script builds the frontend, copies the project to the instance, and runs `install.sh` (and web finish) on the server. The install script installs Ookla Speedtest CLI, iperf3, jq, mtr, netperf scripts, config dirs, and the web app (venv + systemd).
+
+**Linux / macOS (bash):**
 ```bash
 ./deploy-gce.sh INSTANCE_NAME [ZONE] [PROJECT]
 ```
+Example: `./deploy-gce.sh acs-hss-server us-central1-a`
 
-Example:
-```bash
-./deploy-gce.sh my-server us-central1-a my-project
-```
+**Windows:** Use WSL or Git Bash and run the same command: `bash deploy-gce.sh INSTANCE_NAME [ZONE] [PROJECT]`.
 
-- Copies the project to the instance and runs `install.sh` as root.
-- **Conflict checks:** if port 8080 is already in use, the web UI is installed on port **8081** instead.
-- Existing `/etc/netperf/config.json` on the server is kept; new installs get the default config.
-- Requires: `gcloud` CLI, SSH access to the instance (e.g. `gcloud compute ssh`), and a Debian/Ubuntu instance. On Windows, run `deploy-gce.sh` from Git Bash or WSL.
+- Builds the Svelte frontend, streams the project to the instance, runs `install.sh` and finishes the web setup.
+- If port 8080 is in use on the server, the web UI is installed on **8081**; configure nginx to proxy to that port if needed.
+- Existing `/etc/netperf/config.json` on the server is kept.
+- Requires: `gcloud` CLI and a Debian/Ubuntu instance.
+
+## Git and releases
+
+- **Clone:** `git clone <repo-url> && cd Bandwidth-Test-Manager`
+- **Push changes:** `git add . && git commit -m "..." && git push origin master`
+- **Releases:** Tags and release assets are created from the repo. To create a release, tag and push, then create a release in GitHub (or use `gh release create`).
+  ```bash
+  git tag -a v1.0.0 -m "Release v1.0.0"
+  git push origin v1.0.0
+  ```
+  Then open the repo on GitHub → Releases → Draft a new release, choose the tag, add notes, and publish.

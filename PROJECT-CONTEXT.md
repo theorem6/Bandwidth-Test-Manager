@@ -3,10 +3,11 @@
 ## Overview
 
 - **Linux-based speedtest utility** for automated and logged bandwidth testing.
-- **Core tools:** Ookla Speedtest CLI (command line) and **iperf3**.
+- **Outgoing only:** This service runs tests **from** this server **to** external Ookla and iperf3 servers. It does **not** host a speedtest or iperf3 server for others to connect to. The web UI and cron only initiate outbound tests and display results.
+- **Core tools:** Ookla Speedtest CLI (command line) and **iperf3** (client only).
 - Optional: **mtr**, **jq** (required for reporter).
-- **Configurable sites:** Ookla servers and iperf3 servers/tests are defined in `/etc/netperf/config.json` and can be edited in the web UI.
-- **Web interface:** Optional Flask app (port 8080) for viewing graphs, per-site and master chart with legend toggles, and editing config.
+- **Configurable sites:** Ookla servers and iperf3 servers/tests are defined in `/etc/netperf/config.json` and can be edited in the web UI. Cron schedule is also in config.
+- **Web interface:** Optional web app (FastAPI + Uvicorn on port 8080) with **Setup** (install/fix dependencies from UI), **Dashboard** (graphs), **Scheduler** (start/stop cron), and **Settings** (config). UI is responsive. HTTPS can be enabled via nginx using the server’s certificate.
 
 ---
 
@@ -30,6 +31,8 @@ sudo ./install.sh
 
 - Copies project to the instance and runs `install.sh`. If port 8080 is in use on the server, the web UI is installed on 8081. Does not overwrite existing `/etc/netperf/config.json`.
 
+**HTTPS (server already has a certificate):** On the server run `sudo ./web/setup-https.sh [domain]` (e.g. `hss.wisptools.io`). The script detects Let's Encrypt or system certs, installs nginx if needed, and configures a reverse proxy to the web app. If nginx reports a conflicting server name, add inside your existing server block: `include /etc/nginx/snippets/netperf-proxy.conf;` then `sudo nginx -t && sudo systemctl reload nginx`. Ensure firewall allows tcp/443.
+
 ---
 
 ## Core Setup (manual)
@@ -45,11 +48,14 @@ sudo speedtest --accept-license
 ## Config (Ookla & iperf sites)
 
 - Path: `/etc/netperf/config.json`.
-- **speedtest_limit_mbps:** optional number (e.g. `100`) or `null`. When set, speedtest runs are throttled to this many Mbps using `trickle` (install script installs it). Omit or leave empty for no limit.
+- **site_url:** full HTTPS URL where the app is served (e.g. `https://hss.wisptools.io/netperf/`). Used by the HTTPS setup script for redirects and domain detection.
+- **ssl_cert_path** / **ssl_key_path:** server paths to the TLS certificate and private key. The `setup-https.sh` script reads these from config so the server uses the cert you configure.
+- **speedtest_limit_mbps:** optional number (e.g. `100`) or `null`. When set, speedtest runs are throttled using `trickle`. Omit or leave empty for no limit.
+- **cron_schedule:** cron expression for when tests run (e.g. `5 * * * *` = 5 min past every hour). Used by `netperf-scheduler start`. Editable in Settings.
 - **ookla_servers:** list of `{ "id": <number> or "auto", "label": "Label" }`. Use `"id": "auto"` for auto-selected server.
 - **iperf_servers:** list of `{ "host": "hostname", "label": "label" }`.
 - **iperf_tests:** list of `{ "name": "single", "args": "-P 1" }` (args are iperf3 client flags).
-- Editable via **Settings** in the web UI.
+- All of the above are editable via **Settings** in the web UI. After changing site URL or cert paths, run `sudo ./web/setup-https.sh` on the server to apply.
 
 ---
 
@@ -57,20 +63,21 @@ sudo speedtest --accept-license
 
 | Script | Path | Purpose |
 |--------|------|---------|
-| **netperf-scheduler** | `/bin/netperf-scheduler` | Enable/disable automated speed test logging via cron |
+| **netperf-scheduler** | `/bin/netperf-scheduler` | Enable/disable automated speed test logging via cron (schedule from config) |
+| **netperf-cron-run** | `/bin/netperf-cron-run` | Wrapper for cron: runs netperf-tester with today’s log dir |
 | **netperf-tester** | `/bin/netperf-tester` | Run tests (Ookla + iperf3) using **config**; append to daily log dir |
-| **netperf-reporter** | `/bin/netperf-reporter` | Parse and combine output (speedtest CSV; locations discovered from filenames) |
+| **netperf-reporter** | `/bin/netperf-reporter` | Parse and combine output (speedtest CSV; locations from filenames) |
 
-All three **must be run as root**. Tester reads `/etc/netperf/config.json` (or `NETPERF_CONFIG`).
+All must be run as root. Tester reads `/etc/netperf/config.json` (or `NETPERF_CONFIG`).
 
 ---
 
 ## netperf-scheduler
 
 - **Usage:** `netperf-scheduler [start | stop | h]`
-- **start:** Creates `/var/log/netperf/YYYYMMDD`, adds cron job, restarts cron.
+- **start:** Adds cron job using **cron_schedule** from config (default `5 * * * *`), restarts cron. The cron job runs `/bin/netperf-cron-run`, which invokes netperf-tester with `/var/log/netperf/YYYYMMDD` for the current date.
 - **stop:** Removes netperf cron job, restarts cron.
-- **Cron:** `5 * * * * /bin/netperf-tester /var/log/netperf/YYYYMMDD` (minute 5 of every hour).
+- **Install from web UI:** The **Setup** page shows backend status (speedtest, iperf3, jq, config, cron). **Install / fix dependencies** runs `/opt/netperf-web/install-deps.sh` (Ookla repo, apt install speedtest iperf3 jq mtr, accept license, copy scripts to `/bin`). The web service must run as root for this to succeed.
 
 ---
 
@@ -122,9 +129,16 @@ echo -e "alias crontab='EDITOR=nano crontab'" >> .bash_aliases && . .bash_aliase
 
 ## Web interface
 
-- **URL:** `http://<host>:8080` (after `install.sh` and `systemctl start netperf-web`).
-- **Features:** Date selector, metric (download/upload/latency), **master graph** (all sites; click legend to show/hide a site), **per-site graphs**, scheduler start/stop, **Settings** to edit Ookla and iperf servers/tests (writes `/etc/netperf/config.json`).
-- **Service:** `systemctl start|stop|status netperf-web`.
+- **URL:** Use the **Site URL (HTTPS)** configured in Settings (e.g. `https://hss.wisptools.io/netperf/`). No port in the URL; nginx serves over HTTPS on 443. After `install.sh`, run `sudo ./web/setup-https.sh` so the server uses the cert; then open that URL.
+- **Features:** Date selector, metric (download/upload/latency), **master graph** (all sites; click legend to show/hide a site), **per-site graphs**, scheduler start/stop, **Settings** to edit Ookla and iperf servers/tests and the site/cert URL (writes `/etc/netperf/config.json`).
+- **Service:** `systemctl start|stop|status netperf-web` (Uvicorn serves the app on 127.0.0.1:8080; nginx proxies to it).
+
+---
+
+## Outgoing-only (client) behavior
+
+- **netperf-tester** and the web "Run test now" only run **outbound** tests: Speedtest CLI talks to Ookla’s servers; iperf3 runs as **client** to the hosts in config. This host does not act as a speedtest or iperf3 server.
+- If **iperf3 server** is running on this host (e.g. listening on port 5201 from another role or package), you can disable it so the host is client-only: stop/disable the iperf3 service (e.g. `systemctl stop iperf3` / `systemctl disable iperf3` if present, or stop the process using port 5201).
 
 ---
 

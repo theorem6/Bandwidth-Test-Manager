@@ -73,7 +73,9 @@ START() {
 		idx=$((idx + 1))
 	done
 
-	# iperf3: run each server × each test from config
+	# iperf3: run each server × each test from config (duration from config, default 10s)
+	IPERF_DURATION=$(jq -r '.iperf_duration_seconds // 10' "$CONFIG_FILE")
+	[ -z "$IPERF_DURATION" ] || [ "$IPERF_DURATION" = "null" ] && IPERF_DURATION=10
 	server_idx=0
 	while true; do
 		host=$(jq -r --argjson i "$server_idx" '.iperf_servers[$i].host // empty' "$CONFIG_FILE")
@@ -85,7 +87,7 @@ START() {
 			targs=$(jq -r --argjson i "$test_idx" '.iperf_tests[$i].args // empty' "$CONFIG_FILE")
 			[ -z "$tname" ] && break
 			outfile="$STORAGE_LOCATION/iperf-${slabel}-${tname}.txt"
-			iperf3 --timestamp -c "$host" $targs >> "$outfile" 2>/dev/null || true
+			iperf3 --timestamp -c "$host" $targs -t "$IPERF_DURATION" >> "$outfile" 2>/dev/null || true
 			sleep 10
 			test_idx=$((test_idx + 1))
 		done

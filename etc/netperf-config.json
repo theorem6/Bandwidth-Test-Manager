@@ -1,4 +1,7 @@
 {
+  "site_url": "https://hss.wisptools.io/netperf/",
+  "ssl_cert_path": "/etc/letsencrypt/live/hss.wisptools.io/fullchain.pem",
+  "ssl_key_path": "/etc/letsencrypt/live/hss.wisptools.io/privkey.pem",
   "speedtest_limit_mbps": null,
   "ookla_servers": [
     { "id": "auto", "label": "Local" },

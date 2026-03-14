@@ -7,9 +7,14 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 ### Variables ###
-START_DATE="$(date +%Y%m%d)"
-STORAGE_LOCATION="/var/log/netperf/$START_DATE"
-CRON_JOB="5 * * * * /bin/netperf-tester $STORAGE_LOCATION"
+CONFIG_FILE="${NETPERF_CONFIG:-/etc/netperf/config.json}"
+# Schedule from config (default: 5 past every hour). Use wrapper so each run uses current date.
+if [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+	CRON_SCHEDULE=$(jq -r '.cron_schedule // "5 * * * *"' "$CONFIG_FILE")
+else
+	CRON_SCHEDULE="5 * * * *"
+fi
+CRON_JOB="$CRON_SCHEDULE /bin/netperf-cron-run"
 
 ### Process input options ###
 process_arguments() {
@@ -38,17 +43,14 @@ HELP() {
 
 ### Start subroutine ###
 START() {
-	if crontab -l 2>/dev/null | grep -v '^[[:space:]]*#' | grep -q "netperf"; then
-		echo -e "\nnetperf is already scheduled.\n"
-		echo -e "\nRun 'netperf-scheduler stop' before starting again.\n"
-		exit 1
-	fi
-
-	mkdir -p "$STORAGE_LOCATION"
+	mkdir -p /var/log/netperf
+	# Remove any existing netperf cron line(s) so we never have duplicates (one schedule for both Ookla and iperf3)
+	(crontab -l 2>/dev/null | sed '/netperf/d' || true) | crontab -
+	# Add exactly one job: runs netperf-cron-run (which runs speedtest then iperf3 once per tick)
 	(crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
 	systemctl restart cron.service 2>/dev/null || true
 	systemctl restart crond.service 2>/dev/null || true
-	echo -e "\nnetperf scheduled successfully.\n"
+	echo -e "\nnetperf scheduled successfully (Ookla + iperf3 on same schedule).\n"
 }
 
 ### Stop subroutine ###

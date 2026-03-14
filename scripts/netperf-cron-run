@@ -1,0 +1,12 @@
+#!/bin/bash
+# Wrapper for cron: runs netperf-tester with today's log directory.
+# Usage: called by cron (e.g. "5 * * * * /bin/netperf-cron-run")
+set -eu
+if [ "$(id -u)" -ne 0 ]; then
+	echo "Must be run as root." >&2
+	exit 1
+fi
+DATE=$(date +%Y%m%d)
+STORAGE="/var/log/netperf/$DATE"
+mkdir -p "$STORAGE"
+exec /bin/netperf-tester "$STORAGE"
