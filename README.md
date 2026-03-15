@@ -67,6 +67,15 @@ Example: `./deploy-gce.sh acs-hss-server us-central1-a`
   ```
   Existing `/etc/netperf/config.json` is kept. Afterward, start the scheduler if needed: `sudo netperf-scheduler start`.
 
+- **Update existing deployment (from server):** If the repo is already on the server, pull and reinstall the web app:
+  ```bash
+  cd /path/to/Bandwidth-Test-Manager
+  git pull origin master
+  cd web/frontend && npm run build && cd ../..
+  sudo ./install.sh
+  ```
+  Existing config is kept; the web app and static files are updated and the service is restarted.
+
 - Builds the Svelte frontend, streams the project to the instance, runs `install.sh` and finishes the web setup.
 - If port 8080 is in use on the server, the web UI is installed on **8081**; configure nginx to proxy to that port if needed.
 - Existing `/etc/netperf/config.json` on the server is kept.
