@@ -80,6 +80,12 @@ export interface IperfTest {
   args: string;
 }
 
+export interface SlaThresholds {
+  min_download_mbps?: number | null;
+  min_upload_mbps?: number | null;
+  max_latency_ms?: number | null;
+}
+
 export interface Config {
   site_url?: string;
   ssl_cert_path?: string;
@@ -90,6 +96,48 @@ export interface Config {
   ookla_servers?: OoklaServer[];
   iperf_servers?: IperfServer[];
   iperf_tests?: IperfTest[];
+  probe_id?: string;
+  location_name?: string;
+  region?: string;
+  tier?: string;
+  sla_thresholds?: SlaThresholds;
+  webhook_url?: string;
+  webhook_secret?: string;
+  retention_days?: number | null;
+}
+
+export async function checkSla(): Promise<{ ok: boolean; error?: string; message?: string }> {
+  return fetchApi<{ ok: boolean; error?: string; message?: string }>('/api/check-sla', { method: 'POST' });
+}
+
+export interface AlertItem {
+  id: number;
+  created_at: string;
+  probe_id: string;
+  location_name: string;
+  violations: Array<{ site: string; violations: string[] }>;
+  webhook_fired: boolean;
+}
+
+export async function getAlerts(limit: number = 10): Promise<{ alerts: AlertItem[] }> {
+  return fetchApi<{ alerts: AlertItem[] }>(`/api/alerts?limit=${Math.min(200, Math.max(1, limit))}`);
+}
+
+export interface UserItem {
+  username: string;
+  role: string;
+}
+
+export async function getUsers(): Promise<{ users: UserItem[] }> {
+  return fetchApi<{ users: UserItem[] }>('/api/users');
+}
+
+export async function setPassword(username: string, password: string, role: string): Promise<{ ok: boolean; error?: string; message?: string }> {
+  return fetchApi<{ ok: boolean; error?: string; message?: string }>('/api/users/set-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, role }),
+  });
 }
 
 export async function getConfig(): Promise<Config> {
@@ -194,11 +242,47 @@ export async function installDeps(): Promise<{ ok: boolean; error?: string; mess
   );
 }
 
-export async function clearOldData(days: number = 30): Promise<{ ok: boolean; deleted?: number; error?: string; message?: string }> {
-  return fetchApi<{ ok: boolean; deleted?: number; error?: string; message?: string }>(
-    `/api/clear-old-data?days=${Math.min(365, Math.max(1, days))}`,
+export async function clearOldData(days?: number): Promise<{ ok: boolean; deleted_dirs?: number; deleted_speedtest_rows?: number; deleted_iperf_rows?: number; error?: string; message?: string }> {
+  const url = days != null
+    ? `/api/clear-old-data?days=${Math.min(365, Math.max(1, days))}`
+    : '/api/clear-old-data';
+  return fetchApi<{ ok: boolean; deleted_dirs?: number; deleted_speedtest_rows?: number; deleted_iperf_rows?: number; error?: string; message?: string }>(
+    url,
     { method: 'POST' }
   );
+}
+
+export interface SummaryRow {
+  site: string;
+  count: number;
+  download_bps_min: number | null;
+  download_bps_max: number | null;
+  download_bps_avg: number | null;
+  upload_bps_min: number | null;
+  upload_bps_max: number | null;
+  upload_bps_avg: number | null;
+  latency_ms_min: number | null;
+  latency_ms_max: number | null;
+  latency_ms_avg: number | null;
+}
+
+export async function getSummary(fromDate: string, toDate: string, probeId?: string): Promise<{ from: string; to: string; summary: SummaryRow[] }> {
+  let url = `/api/summary?from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
+  if (probeId?.trim()) url += `&probe_id=${encodeURIComponent(probeId.trim())}`;
+  return fetchApi<{ from: string; to: string; summary: SummaryRow[] }>(url);
+}
+
+export async function getSummaryCsvBlob(fromDate: string, toDate: string, probeId?: string): Promise<Blob> {
+  const base = getBase();
+  let url = `${base}/api/export/summary?from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
+  if (probeId?.trim()) url += `&probe_id=${encodeURIComponent(probeId.trim())}`;
+  const r = await fetch(url, { headers: authHeaders() });
+  if (r.status === 401) {
+    auth.logout();
+    throw new Error('Login required');
+  }
+  if (!r.ok) throw new Error(r.statusText);
+  return r.blob();
 }
 
 export async function clearIperfData(): Promise<{ ok: boolean; deleted?: number; error?: string; message?: string }> {

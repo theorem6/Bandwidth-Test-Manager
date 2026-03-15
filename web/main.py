@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Bandwidth Test Manager - Web API and UI (FastAPI + Uvicorn)."""
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -15,23 +18,61 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from typing import Any, Optional
 
-# Users: username -> (password, role). role: "admin" | "readonly"
-AUTH_USERS = {
+# Built-in users (used when config auth_users is missing or empty). username -> (password, role)
+AUTH_USERS_BUILTIN = {
     "bwadmin": ("unl0ck", "admin"),
     "user": ("user", "readonly"),
 }
+AUTH_SALT = "netperf-bwm-v1"
 security_basic = HTTPBasic(auto_error=False)
 
 
+def _hash_password(password: str) -> str:
+    return "sha256:" + hashlib.sha256((AUTH_SALT + password).encode()).hexdigest()
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    if not stored:
+        return False
+    if stored.startswith("sha256:"):
+        return _hash_password(password) == stored
+    if stored.startswith("plain:"):
+        return password == stored[6:]
+    return password == stored
+
+
+def _get_auth_users() -> dict[str, tuple[str, str]]:
+    """Return username -> (password_hash_or_plain, role). From config auth_users if set, else built-in."""
+    cfg = get_config()
+    raw = cfg.get("auth_users")
+    if isinstance(raw, list) and len(raw) > 0:
+        out = {}
+        for u in raw:
+            if not isinstance(u, dict):
+                continue
+            name = (u.get("username") or "").strip()
+            if not name:
+                continue
+            stored = u.get("password_hash") or u.get("password") or ""
+            role = (u.get("role") or "readonly").strip() or "readonly"
+            if role not in ("admin", "readonly"):
+                role = "readonly"
+            out[name] = (stored, role)
+        if out:
+            return out
+    return {k: ("plain:" + v[0], v[1]) for k, v in AUTH_USERS_BUILTIN.items()}
+
+
 def get_current_user(credentials: Optional[HTTPBasicCredentials] = Depends(security_basic)) -> tuple[str, str]:
-    """Validate Basic auth and return (username, role). Raises 401 if invalid. No WWW-Authenticate so browser does not show native popup; use in-page login only."""
+    """Validate Basic auth and return (username, role). No WWW-Authenticate so browser uses in-page login only."""
     if not credentials:
         raise HTTPException(status_code=401, detail="Login required")
     username, password = credentials.username, credentials.password
-    if username not in AUTH_USERS:
+    users = _get_auth_users()
+    if username not in users:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    passwd, role = AUTH_USERS[username]
-    if password != passwd:
+    stored, role = users[username]
+    if not _verify_password(password, stored):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return (username, role)
 
@@ -75,6 +116,20 @@ def get_config() -> dict:
         "ookla_servers": [],
         "iperf_servers": [],
         "iperf_tests": [],
+        "probe_id": "",
+        "location_name": "",
+        "region": "",
+        "tier": "",
+        "sla_thresholds": {
+            "min_download_mbps": None,
+            "min_upload_mbps": None,
+            "max_latency_ms": None,
+        },
+        "webhook_url": "",
+        "webhook_secret": "",
+        "last_sla_alert_at": None,
+        "retention_days": None,
+        "auth_users": [],
     }
     if not CONFIG_PATH.exists():
         return defaults
@@ -83,6 +138,10 @@ def get_config() -> dict:
     for k, v in defaults.items():
         if k not in data:
             data[k] = v
+    if isinstance(data.get("sla_thresholds"), dict):
+        for tk, tv in defaults["sla_thresholds"].items():
+            if tk not in data["sla_thresholds"]:
+                data["sla_thresholds"][tk] = tv
     return data
 
 
@@ -218,21 +277,107 @@ def site_label_from_speedtest_filename(name: str) -> str:
 
 
 def _import_day_from_files(log_date: str) -> None:
-    """Load that day's result files from STORAGE into the SQLite DB (idempotent)."""
+    """Load that day's result files from STORAGE into the SQLite DB (idempotent). Uses probe_id from config."""
     day_dir = STORAGE / log_date
     if not day_dir.exists() or not day_dir.is_dir():
         return
     db.init_db(STORAGE)
+    cfg = get_config()
+    probe_id = (cfg.get("probe_id") or "").strip() or None
     for f in sorted(day_dir.glob("[0-9]_speedtest-*")):
         label = site_label_from_speedtest_filename(f.name)
         points = parse_speedtest_file(f)
         if points:
-            db.import_speedtest_file_into_db(STORAGE, log_date, label, points)
+            db.import_speedtest_file_into_db(STORAGE, log_date, label, points, probe_id=probe_id)
     for f in sorted(day_dir.glob("iperf-*.txt")):
         label = site_label_from_iperf_filename(f.name)
         points = parse_iperf_file(f, log_date=log_date, summary_only=True)
         if points:
-            db.import_iperf_file_into_db(STORAGE, log_date, label, points)
+            db.import_iperf_file_into_db(STORAGE, log_date, label, points, probe_id=probe_id)
+
+
+SLA_ALERT_COOLDOWN_SECONDS = 900  # 15 min
+
+def _evaluate_sla_and_webhook() -> None:
+    """Evaluate latest speedtest results against SLA thresholds; if violated, POST to webhook (with cooldown)."""
+    cfg = get_config()
+    webhook_url = (cfg.get("webhook_url") or "").strip() or os.environ.get("WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return
+    thresholds = cfg.get("sla_thresholds") or {}
+    min_download_mbps = thresholds.get("min_download_mbps")
+    min_upload_mbps = thresholds.get("min_upload_mbps")
+    max_latency_ms = thresholds.get("max_latency_ms")
+    if min_download_mbps is None and min_upload_mbps is None and max_latency_ms is None:
+        return
+    today = datetime.utcnow().strftime("%Y%m%d")
+    db.init_db(STORAGE)
+    probe_id = (cfg.get("probe_id") or "").strip() or None
+    results = db.get_latest_speedtest_results(STORAGE, today, probe_id=probe_id)
+    if not results:
+        return
+    violations: list[dict] = []
+    for r in results:
+        site = r.get("site", "")
+        down_bps = r.get("download_bps")
+        up_bps = r.get("upload_bps")
+        lat = r.get("latency_ms")
+        down_mbps = (down_bps / 1e6) if down_bps is not None else None
+        up_mbps = (up_bps / 1e6) if up_bps is not None else None
+        v: list[str] = []
+        if min_download_mbps is not None and down_mbps is not None and down_mbps < min_download_mbps:
+            v.append("download %.2f Mbps < %s Mbps" % (down_mbps, min_download_mbps))
+        if min_upload_mbps is not None and up_mbps is not None and up_mbps < min_upload_mbps:
+            v.append("upload %.2f Mbps < %s Mbps" % (up_mbps, min_upload_mbps))
+        if max_latency_ms is not None and lat is not None and lat > max_latency_ms:
+            v.append("latency %.1f ms > %s ms" % (lat, max_latency_ms))
+        if v:
+            violations.append({"site": site, "violations": v, "download_mbps": down_mbps, "upload_mbps": up_mbps, "latency_ms": lat})
+    if not violations:
+        return
+    last_at = cfg.get("last_sla_alert_at")
+    if last_at:
+        try:
+            s = last_at.replace("Z", "").replace("+00:00", "").strip()
+            dt = datetime.fromisoformat(s)
+            if (datetime.utcnow() - dt).total_seconds() < SLA_ALERT_COOLDOWN_SECONDS:
+                return
+        except Exception:
+            pass
+    payload = {
+        "event": "sla_violation",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "probe_id": cfg.get("probe_id") or "",
+        "location_name": cfg.get("location_name") or "",
+        "region": cfg.get("region") or "",
+        "tier": cfg.get("tier") or "",
+        "results": results,
+        "violations": violations,
+    }
+    secret = (cfg.get("webhook_secret") or "").strip() or os.environ.get("WEBHOOK_SECRET", "").strip()
+    try:
+        req = urllib.request.Request(
+            webhook_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Bandwidth-Test-Manager/1.0"},
+            method="POST",
+        )
+        if secret:
+            req.add_header("X-Webhook-Secret", secret)
+        with urllib.request.urlopen(req, timeout=15) as _:
+            pass
+        cfg["last_sla_alert_at"] = datetime.utcnow().isoformat() + "Z"
+        save_config(cfg)
+        db.init_db(STORAGE)
+        db.insert_alert(
+            STORAGE,
+            probe_id=cfg.get("probe_id") or "",
+            location_name=cfg.get("location_name") or "",
+            violations=violations,
+            webhook_fired=True,
+        )
+    except Exception:
+        pass
 
 
 def _local_timestamp_from_file(path: Path) -> Optional[str]:
@@ -386,6 +531,49 @@ def _parse_speedtest_servers_text(out: str) -> list[dict]:
 def api_me(user: tuple[str, str] = Depends(get_current_user)):
     """Return current user and role (for login flow and UI)."""
     return JSONResponse({"username": user[0], "role": user[1]})
+
+
+@app.get("/api/users")
+def api_users_list(_user: tuple[str, str] = Depends(require_admin)):
+    """List usernames and roles (no passwords). For configurable auth."""
+    users = _get_auth_users()
+    return JSONResponse({
+        "users": [{"username": u, "role": r} for u, (_, r) in users.items()],
+    })
+
+
+@app.post("/api/users/set-password")
+async def api_users_set_password(request: Request, _user: tuple[str, str] = Depends(require_admin)):
+    """Set or update a user (username, password, role). Stores hashed password in config auth_users."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    username = (body.get("username") or "").strip()
+    password = body.get("password")
+    role = (body.get("role") or "readonly").strip() or "readonly"
+    if role not in ("admin", "readonly"):
+        role = "readonly"
+    if not username or not isinstance(password, str) or len(password) < 1:
+        return JSONResponse({"ok": False, "error": "username and password required."}, status_code=400)
+    if len(username) > 128:
+        return JSONResponse({"ok": False, "error": "username too long."}, status_code=400)
+    cfg = get_config()
+    auth_users = list(cfg.get("auth_users") or [])
+    if not isinstance(auth_users, list):
+        auth_users = []
+    existing = next((i for i, u in enumerate(auth_users) if isinstance(u, dict) and (u.get("username") or "").strip() == username), None)
+    entry = {"username": username, "password_hash": _hash_password(password), "role": role}
+    if existing is not None:
+        auth_users[existing] = entry
+    else:
+        auth_users.append(entry)
+    cfg["auth_users"] = auth_users
+    try:
+        save_config(cfg)
+        return JSONResponse({"ok": True, "message": f"User {username} updated."})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 def _run_speedtest_list(cmd: list[str], env: dict) -> tuple[str, str, int]:
@@ -549,6 +737,9 @@ def api_run_now(_user: tuple[str, str] = Depends(require_admin)):
                 cwd="/",
                 env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
             )
+            today = datetime.utcnow().strftime("%Y%m%d")
+            _import_day_from_files(today)
+            _evaluate_sla_and_webhook()
         except Exception:
             pass
         finally:
@@ -611,7 +802,22 @@ async def api_config_set(request: Request, _user: tuple[str, str] = Depends(requ
         raw_tests = data.get("iperf_tests")
         if isinstance(raw_tests, list):
             cur["iperf_tests"] = [{"name": str(t.get("name", "test")).strip() or "test", "args": str(t.get("args", "")).strip()} for t in raw_tests if isinstance(t, dict)]
-        # else leave cur unchanged
+    for key in ("probe_id", "location_name", "region", "tier"):
+        if key in data:
+            cur[key] = (data.get(key) or "").strip()
+    if "sla_thresholds" in data and isinstance(data["sla_thresholds"], dict):
+        cur.setdefault("sla_thresholds", {})
+        for k in ("min_download_mbps", "min_upload_mbps", "max_latency_ms"):
+            if k in data["sla_thresholds"]:
+                v = data["sla_thresholds"][k]
+                cur["sla_thresholds"][k] = int(v) if v is not None and str(v).strip() != "" else None
+    if "webhook_url" in data:
+        cur["webhook_url"] = (data.get("webhook_url") or "").strip()
+    if "webhook_secret" in data:
+        cur["webhook_secret"] = (data.get("webhook_secret") or "").strip()
+    if "retention_days" in data:
+        v = data.get("retention_days")
+        cur["retention_days"] = int(v) if v is not None and str(v).strip() != "" else None
     try:
         save_config(cur)
         return JSONResponse({"ok": True})
@@ -637,14 +843,15 @@ def api_dates():
 
 
 @app.get("/api/data")
-def api_data(date: Optional[str] = None):
-    """Return speedtest and iperf data for a date. Reads from SQLite; imports from files first if needed."""
+def api_data(date: Optional[str] = None, probe_id: Optional[str] = None):
+    """Return speedtest and iperf data for a date. Optional probe_id filter. Imports from files first if needed."""
     try:
         if not date or not date.isdigit():
             return JSONResponse({"error": "missing or invalid date"}, status_code=400)
         _import_day_from_files(date)
-        speedtest = db.get_speedtest_for_date(STORAGE, date)
-        iperf = db.get_iperf_for_date(STORAGE, date)
+        pid = (probe_id or "").strip() or None
+        speedtest = db.get_speedtest_for_date(STORAGE, date, probe_id=pid)
+        iperf = db.get_iperf_for_date(STORAGE, date, probe_id=pid)
         return JSONResponse({"speedtest": speedtest, "iperf": iperf})
     except Exception:
         return JSONResponse({"speedtest": {}, "iperf": {}})
@@ -1022,22 +1229,150 @@ def api_clear_iperf_data(_user: tuple[str, str] = Depends(require_admin)):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
-@app.post("/api/clear-old-data")
-def api_clear_old_data(days: int = 30, _user: tuple[str, str] = Depends(require_admin)):
-    """Delete log directories older than `days` (keep last N days). Default 30."""
+@app.post("/api/check-sla")
+def api_check_sla(_user: tuple[str, str] = Depends(require_admin)):
+    """Run SLA evaluation now (compare latest results to thresholds, fire webhook if violated). Called automatically after Run test now; use this for cron or manual trigger."""
     try:
-        if not STORAGE.exists():
-            return JSONResponse({"ok": True, "deleted": 0, "message": "No storage dir."})
-        cutoff = (datetime.utcnow() - timedelta(days=min(max(days, 1), 365))).strftime("%Y%m%d")
-        deleted = 0
-        for d in STORAGE.iterdir():
-            if d.is_dir() and d.name.isdigit() and d.name < cutoff:
-                try:
-                    shutil.rmtree(d)
-                    deleted += 1
-                except OSError:
-                    pass
-        return JSONResponse({"ok": True, "deleted": deleted, "message": f"Removed {deleted} day(s) older than {days} days."})
+        _evaluate_sla_and_webhook()
+        return JSONResponse({"ok": True, "message": "SLA check completed."})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/summary")
+def api_summary(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    probe_id: Optional[str] = None,
+    _user: tuple[str, str] = Depends(get_current_user),
+):
+    """Summary report: per-site min/max/avg download, upload, latency for date range. from_date/to_date = YYYYMMDD; default last 30 days."""
+    try:
+        db.init_db(STORAGE)
+        now = datetime.utcnow()
+        if not from_date or not from_date.isdigit():
+            from_date = (now - timedelta(days=30)).strftime("%Y%m%d")
+        if not to_date or not to_date.isdigit():
+            to_date = now.strftime("%Y%m%d")
+        if from_date > to_date:
+            from_date, to_date = to_date, from_date
+        pid = (probe_id or "").strip() or None
+        rows = db.get_summary(STORAGE, from_date, to_date, probe_id=pid)
+        return JSONResponse({"from": from_date, "to": to_date, "probe_id": pid or "", "summary": rows})
+    except Exception as e:
+        return JSONResponse({"error": str(e), "summary": []}, status_code=500)
+
+
+@app.get("/api/export/summary")
+def api_export_summary(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    probe_id: Optional[str] = None,
+    _user: tuple[str, str] = Depends(get_current_user),
+):
+    """Download summary report as CSV (per-site min/max/avg for date range)."""
+    try:
+        db.init_db(STORAGE)
+        now = datetime.utcnow()
+        if not from_date or not from_date.isdigit():
+            from_date = (now - timedelta(days=30)).strftime("%Y%m%d")
+        if not to_date or not to_date.isdigit():
+            to_date = now.strftime("%Y%m%d")
+        if from_date > to_date:
+            from_date, to_date = to_date, from_date
+        pid = (probe_id or "").strip() or None
+        rows = db.get_summary(STORAGE, from_date, to_date, probe_id=pid)
+        lines = [
+            "site,count,download_mbps_min,download_mbps_max,download_mbps_avg,upload_mbps_min,upload_mbps_max,upload_mbps_avg,latency_ms_min,latency_ms_max,latency_ms_avg",
+        ]
+        for r in rows:
+            def mbps(bps):
+                return round((bps or 0) / 1e6, 2) if bps is not None else ""
+            def ms(v):
+                return round(v, 1) if v is not None else ""
+            lines.append(",".join([
+                _escape_csv(r.get("site")),
+                str(r.get("count", 0)),
+                str(mbps(r.get("download_bps_min"))),
+                str(mbps(r.get("download_bps_max"))),
+                str(mbps(r.get("download_bps_avg"))),
+                str(mbps(r.get("upload_bps_min"))),
+                str(mbps(r.get("upload_bps_max"))),
+                str(mbps(r.get("upload_bps_avg"))),
+                str(ms(r.get("latency_ms_min"))),
+                str(ms(r.get("latency_ms_max"))),
+                str(ms(r.get("latency_ms_avg"))),
+            ]))
+        body = "\n".join(lines)
+        return Response(
+            content=body,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="netperf-summary-{from_date}-{to_date}.csv"'},
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/alerts")
+def api_alerts(limit: int = 50, _user: tuple[str, str] = Depends(get_current_user)):
+    """Return recent SLA alert history (newest first). Default limit 50, max 200."""
+    try:
+        db.init_db(STORAGE)
+        alerts = db.get_alerts(STORAGE, limit=min(max(1, limit), 200))
+        return JSONResponse({"alerts": alerts})
+    except Exception as e:
+        return JSONResponse({"alerts": [], "error": str(e)})
+
+
+@app.get("/api/sla-status")
+def api_sla_status(_user: tuple[str, str] = Depends(get_current_user)):
+    """Return SLA config and last alert time (no violation details)."""
+    cfg = get_config()
+    thresholds = cfg.get("sla_thresholds") or {}
+    return JSONResponse({
+        "probe_id": cfg.get("probe_id") or "",
+        "location_name": cfg.get("location_name") or "",
+        "sla_thresholds": {
+            "min_download_mbps": thresholds.get("min_download_mbps"),
+            "min_upload_mbps": thresholds.get("min_upload_mbps"),
+            "max_latency_ms": thresholds.get("max_latency_ms"),
+        },
+        "webhook_configured": bool((cfg.get("webhook_url") or "").strip() or os.environ.get("WEBHOOK_URL")),
+        "last_sla_alert_at": cfg.get("last_sla_alert_at"),
+    })
+
+
+@app.post("/api/clear-old-data")
+def api_clear_old_data(days: Optional[int] = None, _user: tuple[str, str] = Depends(require_admin)):
+    """Delete log dirs and DB rows older than `days` (keep last N days). If days omitted, uses config retention_days (null = 30)."""
+    try:
+        cfg = get_config()
+        if days is None:
+            days = cfg.get("retention_days")
+            if days is None:
+                days = 30
+        days = min(max(int(days), 1), 365)
+        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y%m%d")
+        db_deleted_speed, db_deleted_iperf = 0, 0
+        if (STORAGE / "netperf.db").exists():
+            db.init_db(STORAGE)
+            db_deleted_speed, db_deleted_iperf = db.delete_results_before(STORAGE, cutoff)
+        dir_deleted = 0
+        if STORAGE.exists():
+            for d in STORAGE.iterdir():
+                if d.is_dir() and d.name.isdigit() and d.name < cutoff:
+                    try:
+                        shutil.rmtree(d)
+                        dir_deleted += 1
+                    except OSError:
+                        pass
+        return JSONResponse({
+            "ok": True,
+            "deleted_dirs": dir_deleted,
+            "deleted_speedtest_rows": db_deleted_speed,
+            "deleted_iperf_rows": db_deleted_iperf,
+            "message": f"Purged data older than {days} days ({dir_deleted} dirs, {db_deleted_speed + db_deleted_iperf} DB rows).",
+        })
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 

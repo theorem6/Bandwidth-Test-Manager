@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getBackendStatus, installDeps, clearOldData, clearIperfData, getTimezone, getTimezones, setTimezone, ntpInstall } from './lib/api';
-  import type { BackendStatus } from './lib/api';
+  import { getBackendStatus, installDeps, clearOldData, clearIperfData, getTimezone, getTimezones, setTimezone, ntpInstall, getAlerts, getUsers, setPassword } from './lib/api';
+  import type { BackendStatus, AlertItem, UserItem } from './lib/api';
 
   export let onToast: (msg: string, type?: 'success' | 'error') => void;
 
@@ -17,6 +17,28 @@
   let timezoneLoading = false;
   let settingTimezone = false;
   let installingNtp = false;
+  let alerts: AlertItem[] = [];
+  let alertsLoading = false;
+  let users: UserItem[] = [];
+  let usersLoading = false;
+  let usersError = '';
+  let setPasswordUsername = '';
+  let setPasswordPassword = '';
+  let setPasswordRole = 'admin';
+  let setPasswordLoading = false;
+  let setPasswordMessage = '';
+
+  async function loadAlerts() {
+    alertsLoading = true;
+    try {
+      const r = await getAlerts(10);
+      alerts = r.alerts || [];
+    } catch {
+      alerts = [];
+    } finally {
+      alertsLoading = false;
+    }
+  }
 
   async function load() {
     loading = true;
@@ -32,9 +54,9 @@
       if (timezoneInfo?.timezone && !selectedTimezone) selectedTimezone = timezoneInfo.timezone;
     } catch {
       timezoneInfo = null;
-    } finally {
-      loading = false;
     }
+    loadAlerts();
+    loading = false;
   }
 
   async function loadTimezones() {
@@ -122,15 +144,15 @@
   async function runClearOld() {
     clearing = true;
     try {
-      const r = await clearOldData(30);
+      const r = await clearOldData();
       if (r.ok) {
-        onToast(r.message || `Cleared ${r.deleted ?? 0} old day(s).`);
+        onToast(r.message || `Purged ${r.deleted_dirs ?? 0} dir(s), ${(r.deleted_speedtest_rows ?? 0) + (r.deleted_iperf_rows ?? 0)} DB rows.`);
         await load();
       } else {
-        onToast(r.error || 'Clear failed', 'error');
+        onToast(r.error || 'Purge failed', 'error');
       }
     } catch (e) {
-      onToast(e instanceof Error ? e.message : 'Clear failed', 'error');
+      onToast(e instanceof Error ? e.message : 'Purge failed', 'error');
     } finally {
       clearing = false;
     }
@@ -153,9 +175,54 @@
     }
   }
 
+  async function loadUsers() {
+    usersLoading = true;
+    usersError = '';
+    try {
+      const r = await getUsers();
+      users = r.users || [];
+    } catch (e) {
+      users = [];
+      usersError = e instanceof Error ? e.message : 'Failed to load (admin only)';
+    } finally {
+      usersLoading = false;
+    }
+  }
+
+  async function runSetPassword() {
+    if (!setPasswordUsername.trim()) {
+      onToast('Enter username.', 'error');
+      return;
+    }
+    if (!setPasswordPassword) {
+      onToast('Enter password.', 'error');
+      return;
+    }
+    setPasswordLoading = true;
+    setPasswordMessage = '';
+    try {
+      const r = await setPassword(setPasswordUsername.trim(), setPasswordPassword, setPasswordRole);
+      if (r.ok) {
+        setPasswordMessage = r.message || 'Saved.';
+        setPasswordPassword = '';
+        onToast(setPasswordMessage);
+        loadUsers();
+      } else {
+        setPasswordMessage = r.error || 'Failed';
+        onToast(setPasswordMessage, 'error');
+      }
+    } catch (e) {
+      setPasswordMessage = e instanceof Error ? e.message : 'Failed';
+      onToast(setPasswordMessage, 'error');
+    } finally {
+      setPasswordLoading = false;
+    }
+  }
+
   onMount(() => {
     load();
     loadTimezones();
+    loadUsers();
   });
 </script>
 
@@ -226,12 +293,12 @@
           class="btn btn-outline-warning btn-sm"
           on:click={runClearOld}
           disabled={clearing}
-          title="Delete log folders older than 30 days"
+          title="Purge log dirs and DB rows older than retention_days (Settings). Default 30 if not set."
         >
           {#if clearing}
             <span class="spinner-border spinner-border-sm me-1" role="status"></span>
           {/if}
-          Clear old data (keep 30 days)
+          Purge old data (retention policy)
         </button>
         <button
           type="button"
@@ -249,6 +316,83 @@
       <p class="form-text text-muted small mt-2 mb-0">
         Installs on this server: Ookla repo, speedtest, iperf3, mtr, jq. Copies netperf scripts to <code>/bin</code> and creates <code>/etc/netperf</code>, <code>/var/log/netperf</code>. The first run can take 2–5 minutes (apt update + install). All configuration is in <strong>Settings</strong>.
       </p>
+    {/if}
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header text-dark">Users (configurable auth)</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      Add or update users; passwords are stored hashed in config. After adding <strong>auth_users</strong>, built-in users are no longer used.
+    </p>
+    {#if usersLoading}
+      <p class="text-muted small mb-0">Loading…</p>
+    {:else if usersError}
+      <p class="small text-warning mb-0">{usersError}</p>
+    {:else}
+      {#if users.length > 0}
+        <ul class="list-unstyled small mb-3">
+          {#each users as u}
+            <li><span class="badge bg-secondary me-1">{u.username}</span> {u.role}</li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="text-muted small mb-3">No custom users yet. Set a password below to create config auth_users.</p>
+      {/if}
+    {/if}
+    <div class="row g-2 align-items-end mb-2">
+      <div class="col-auto">
+        <label for="setup-user-username" class="form-label small mb-0">Username</label>
+        <input id="setup-user-username" type="text" class="form-control form-control-sm" style="width:10rem" bind:value={setPasswordUsername} placeholder="e.g. bwadmin" />
+      </div>
+      <div class="col-auto">
+        <label for="setup-user-password" class="form-label small mb-0">Password</label>
+        <input id="setup-user-password" type="password" class="form-control form-control-sm" style="width:10rem" bind:value={setPasswordPassword} placeholder="New password" autocomplete="new-password" />
+      </div>
+      <div class="col-auto">
+        <label for="setup-user-role" class="form-label small mb-0">Role</label>
+        <select id="setup-user-role" class="form-select form-select-sm" style="width:8rem" bind:value={setPasswordRole}>
+          <option value="admin">admin</option>
+          <option value="readonly">readonly</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <button type="button" class="btn btn-outline-primary btn-sm" on:click={runSetPassword} disabled={setPasswordLoading}>
+          {#if setPasswordLoading}…{:else}Set password{/if}
+        </button>
+      </div>
+    </div>
+    {#if setPasswordMessage}
+      <p class="small mb-0 {setPasswordMessage.includes('Failed') ? 'text-danger' : 'text-success'}">{setPasswordMessage}</p>
+    {/if}
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header text-dark">Recent SLA alerts</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      Last SLA violations that triggered a webhook. Configure thresholds and webhook URL in <strong>Settings</strong> → SLA &amp; alerts.
+    </p>
+    {#if alertsLoading}
+      <p class="text-muted small mb-0">Loading…</p>
+    {:else if alerts.length === 0}
+      <p class="text-muted small mb-0">No alerts recorded yet.</p>
+    {:else}
+      <ul class="list-unstyled mb-0">
+        {#each alerts.slice(0, 10) as alert}
+          <li class="small mb-2 pb-2 border-bottom border-light">
+            <span class="text-secondary">{new Date(alert.created_at).toLocaleString()}</span>
+            {#if alert.probe_id || alert.location_name}
+              <span class="ms-1">({[alert.probe_id, alert.location_name].filter(Boolean).join(' — ')})</span>
+            {/if}
+            {#each alert.violations || [] as v}
+              <div class="mt-1"><strong>{v.site}</strong>: {v.violations?.join('; ') ?? ''}</div>
+            {/each}
+          </li>
+        {/each}
+      </ul>
     {/if}
   </div>
 </div>

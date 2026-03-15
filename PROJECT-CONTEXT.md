@@ -7,7 +7,8 @@
 - **Core tools:** Ookla Speedtest CLI (command line) and **iperf3** (client only).
 - Optional: **mtr**, **jq** (required for reporter).
 - **Configurable sites:** Ookla servers and iperf3 servers/tests are defined in `/etc/netperf/config.json` and can be edited in the web UI. Cron schedule is also in config.
-- **Web interface:** Optional web app (FastAPI + Uvicorn on port 8080) with **Setup** (install/fix dependencies from UI), **Dashboard** (graphs), **Scheduler** (start/stop cron), and **Settings** (config). UI is responsive. HTTPS can be enabled via nginx using the server’s certificate.
+- **Web interface:** Optional web app (FastAPI + Uvicorn on port 8080) with **Setup** (install/fix dependencies, **Users** for configurable auth, **Recent SLA alerts**, timezone/NTP, purge), **Dashboard** (graphs, CSV/summary export), **Scheduler**, and **Settings** (config, probe identity, SLA thresholds & webhook, retention). UI is responsive. HTTPS via nginx. Public read-only landing; admin login for full access.
+- **Data:** Results stored in **SQLite** (`/var/log/netperf/netperf.db`); log files under `/var/log/netperf/YYYYMMDD/` are imported on read. Optional **probe_id** for multi-site; **retention_days** and purge from Setup.
 
 ---
 
@@ -55,7 +56,13 @@ sudo speedtest --accept-license
 - **ookla_servers:** list of `{ "id": <number> or "auto", "label": "Label" }`. Use `"id": "auto"` for auto-selected server.
 - **iperf_servers:** list of `{ "host": "hostname", "label": "label" }`.
 - **iperf_tests:** list of `{ "name": "single", "args": "-P 1" }` (args are iperf3 client flags).
-- All of the above are editable via **Settings** in the web UI. After changing site URL or cert paths, run `sudo ./web/setup-https.sh` on the server to apply.
+- **iperf_duration_seconds:** duration in seconds for each iperf3 test (default 10). Editable in Settings.
+- **probe_id**, **location_name**, **region**, **tier:** optional identity for this probe (ISP/multi-site). Stored with results.
+- **sla_thresholds:** `min_download_mbps`, `min_upload_mbps`, `max_latency_ms`. When violated, webhook is called (with cooldown).
+- **webhook_url**, **webhook_secret:** URL and optional secret header for SLA violation POSTs.
+- **retention_days:** optional; purge (Setup) deletes data older than this (default 30 when omitted).
+- **auth_users:** optional list of `{ "username", "password_hash", "role" }`. When set, replaces built-in users; use **Setup → Users** to add/update (passwords stored hashed).
+- All of the above (except auth_users) are editable via **Settings**; auth is managed in **Setup → Users**. After changing site URL or cert paths, run `sudo ./web/setup-https.sh` on the server to apply.
 
 ---
 
@@ -130,8 +137,9 @@ echo -e "alias crontab='EDITOR=nano crontab'" >> .bash_aliases && . .bash_aliase
 ## Web interface
 
 - **URL:** Use the **Site URL (HTTPS)** configured in Settings (e.g. `https://hss.wisptools.io/netperf/`). No port in the URL; nginx serves over HTTPS on 443. After `install.sh`, run `sudo ./web/setup-https.sh` so the server uses the cert; then open that URL.
-- **Features:** Date selector, metric (download/upload/latency), **master graph** (all sites; click legend to show/hide a site), **per-site graphs**, scheduler start/stop, **Settings** to edit Ookla and iperf servers/tests and the site/cert URL (writes `/etc/netperf/config.json`).
-- **Service:** `systemctl start|stop|status netperf-web` (Uvicorn serves the app on 127.0.0.1:8080; nginx proxies to it).
+- **Auth:** Built-in users `bwadmin` (admin) and `user` (readonly) until **Setup → Users** is used to set a password; then config `auth_users` (hashed) is used. Landing page is read-only with scheduler toggle; **Login** gives admin menu.
+- **Features:** **Dashboard** — date selector, separate graphs (download/upload/latency, iperf), trend over time, Run test now, CSV and summary export. **Setup** — backend status, install deps, **Users** (configurable auth), **Recent SLA alerts**, timezone/NTP, purge old data. **Scheduler** — start/stop cron. **Settings** — site URL, SSL, speed limit, cron, Ookla/iperf, probe identity, SLA thresholds & webhook, retention (writes `/etc/netperf/config.json`).
+- **Service:** `systemctl start|stop|status netperf-web` (Uvicorn on 127.0.0.1:8080 or 8081; nginx proxies to it).
 
 ---
 

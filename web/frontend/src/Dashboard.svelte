@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { Chart } from 'chart.js';
-  import { getDates, getData, getHealth, getBase, getRunStatus, getHistory, authHeaders, getExportCsvBlob } from './lib/api';
+  import { getDates, getData, getHealth, getBase, getRunStatus, getHistory, authHeaders, getExportCsvBlob, getSummaryCsvBlob } from './lib/api';
   import { formatValue, formatDate, formatDateShort, formatDateTimeShort } from './lib/format';
   import { loading } from './lib/stores';
   import type { SpeedtestPoint, IperfPoint, DataResponse, HistoryResponse } from './lib/api';
@@ -24,6 +24,7 @@
   let historyLoading = false;
   let historyDays = 30;
   let csvDownloading = false;
+  let summaryDownloading = false;
   let trendDownloadCanvas: HTMLCanvasElement;
   let trendUploadCanvas: HTMLCanvasElement;
   let trendLatencyCanvas: HTMLCanvasElement;
@@ -445,6 +446,31 @@
     }
   }
 
+  async function downloadSummaryCsv() {
+    if (summaryDownloading) return;
+    summaryDownloading = true;
+    try {
+      const to = new Date();
+      const from = new Date(to);
+      from.setDate(from.getDate() - 30);
+      const pad = (n: number) => (n < 10 ? '0' + n : String(n));
+      const fromStr = `${from.getFullYear()}${pad(from.getMonth() + 1)}${pad(from.getDate())}`;
+      const toStr = `${to.getFullYear()}${pad(to.getMonth() + 1)}${pad(to.getDate())}`;
+      const blob = await getSummaryCsvBlob(fromStr, toStr);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `netperf-summary-${fromStr}-${toStr}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      onToast('Summary CSV downloaded (last 30 days).');
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : 'Download failed', 'error');
+    } finally {
+      summaryDownloading = false;
+    }
+  }
+
   function triggerRunNowFireAndForget() {
     const base = getBase();
     const url = base + '/api/run-now';
@@ -547,6 +573,12 @@
               <i class="bi bi-download me-1"></i>
             {/if}
             Download CSV
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" on:click={downloadSummaryCsv} disabled={summaryDownloading} title="Per-site min/max/avg for last 30 days">
+            {#if summaryDownloading}
+              <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            {/if}
+            Download summary (30d)
           </button>
         {/if}
         {#if selectedDate && hasAnyData}

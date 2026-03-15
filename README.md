@@ -2,7 +2,7 @@
 
 Linux-based speedtest utility using **Ookla Speedtest CLI** and **iperf3**, with configurable sites, optional scheduling, CSV reporting, and a **web UI** with per-site and master graphs. **Outgoing only:** the app runs tests from this server to external speedtest/iperf servers; it does not host a speedtest or iperf server for others.
 
-See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and usage.
+See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and usage. For turning this into a vital **ISP tool** (SLAs, alerting, multi-probe, reports), see **[docs/ISP-ROADMAP.md](docs/ISP-ROADMAP.md)**.
 
 ## Quick start (Linux)
 
@@ -24,10 +24,11 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
 
 4. **Web interface** (if installed)
    - Open the **Site URL** from Settings (e.g. `https://your-server.netperf/`). Use HTTPS with no port in the URL; run `sudo ./web/setup-https.sh` on the server once to enable it.
-   - **Setup:** view backend status. Installation is done via the **install script** when you deploy; use **Install / fix dependencies** only if you need to repair or install on a server that wasn’t set up with the script.
-   - **Dashboard:** pick a date and metric; graphs show real test results. Use **Run test now** (admin) or the **Scheduler** to run Ookla and iperf3 tests; data is written to `/var/log/netperf/YYYYMMDD/` and shown in the UI.
-   - **Scheduler:** start or stop the hourly test cron.
-   - **Settings:** site URL, SSL paths, speed limit, cron schedule, Ookla/iperf servers and tests.
+   - **Landing:** read-only dashboard and scheduler toggle; **Login** (admin) unlocks the full menu.
+   - **Setup:** backend status, **Install / fix dependencies**, **Users** (configurable auth: add/update users, passwords stored hashed), **Recent SLA alerts**, timezone/NTP, purge old data (retention).
+   - **Dashboard:** date picker, per-site and trend graphs (download/upload/latency, iperf). **Run test now** (admin), CSV export, **Download summary (30d)**.
+   - **Scheduler:** start or stop the test cron.
+   - **Settings:** site URL, SSL, speed limit, cron, Ookla/iperf servers, **probe identity**, **SLA thresholds & webhook**, **data retention**.
 
 5. **Generate speedtest report** (CLI, after some runs)
    ```bash
@@ -54,7 +55,17 @@ Deploy to a GCE instance: the script builds the frontend, copies the project to 
 ```
 Example: `./deploy-gce.sh acs-hss-server us-central1-a`
 
-**Windows:** Use WSL or Git Bash and run the same command: `bash deploy-gce.sh INSTANCE_NAME [ZONE] [PROJECT]`.
+**Deploy from Windows**
+
+- **Option A (recommended):** Use WSL or Git Bash so you can run the same deploy script. Install [WSL](https://docs.microsoft.com/en-us/windows/wsl/install) or [Git for Windows](https://git-scm.com/download/win), then from the project directory run: `bash deploy-gce.sh INSTANCE_NAME [ZONE] [PROJECT]`.
+- **Option B (no bash on Windows):** Deploy from the server. SSH into the instance, clone the repo, build the frontend, then run the install script:
+  ```bash
+  git clone https://github.com/theorem6/Bandwidth-Test-Manager.git
+  cd Bandwidth-Test-Manager
+  cd web/frontend && npm install && npm run build && cd ../..
+  sudo ./install.sh
+  ```
+  Existing `/etc/netperf/config.json` is kept. Afterward, start the scheduler if needed: `sudo netperf-scheduler start`.
 
 - Builds the Svelte frontend, streams the project to the instance, runs `install.sh` and finishes the web setup.
 - If port 8080 is in use on the server, the web UI is installed on **8081**; configure nginx to proxy to that port if needed.

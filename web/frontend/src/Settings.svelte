@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getConfig, putConfig, getSpeedtestServers } from './lib/api';
+  import { getConfig, putConfig, getSpeedtestServers, checkSla } from './lib/api';
   import type { Config, OoklaServer, IperfServer, IperfTest, SpeedtestServerOption } from './lib/api';
 
   export let onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -19,6 +19,17 @@
   let ooklaServerOptions: SpeedtestServerOption[] = [];
   let ooklaOptionsLoading = false;
   let ooklaOptionsError = '';
+  let probeId = '';
+  let locationName = '';
+  let region = '';
+  let tier = '';
+  let slaMinDownloadMbps = '';
+  let slaMinUploadMbps = '';
+  let slaMaxLatencyMs = '';
+  let webhookUrl = '';
+  let webhookSecret = '';
+  let checkSlaLoading = false;
+  let retentionDays = '';
 
   function ooklaToForm(raw: OoklaServer[]): { id: string; label: string }[] {
     if (!Array.isArray(raw)) return [];
@@ -107,6 +118,17 @@
       iperfServers = iperfServerToForm((c.iperf_servers as IperfServer[]) || []);
       iperfTests = iperfTestToForm((c.iperf_tests as IperfTest[]) || []);
       if (iperfTests.length === 0) iperfTests = [{ name: 'single', args: '-P 1' }];
+      probeId = c.probe_id ?? '';
+      locationName = c.location_name ?? '';
+      region = c.region ?? '';
+      tier = c.tier ?? '';
+      const sla = c.sla_thresholds ?? {};
+      slaMinDownloadMbps = sla.min_download_mbps != null ? String(sla.min_download_mbps) : '';
+      slaMinUploadMbps = sla.min_upload_mbps != null ? String(sla.min_upload_mbps) : '';
+      slaMaxLatencyMs = sla.max_latency_ms != null ? String(sla.max_latency_ms) : '';
+      webhookUrl = c.webhook_url ?? '';
+      webhookSecret = c.webhook_secret ?? '';
+      retentionDays = c.retention_days != null ? String(c.retention_days) : '';
       loadOoklaOptions();
     } catch {
       message = 'Failed to load config';
@@ -160,6 +182,9 @@
     }
     try {
       const duration = Math.max(1, Math.min(300, parseInt(String(iperfDurationSeconds), 10) || 10));
+      const slaMinD = slaMinDownloadMbps.trim() ? parseInt(slaMinDownloadMbps, 10) : null;
+      const slaMinU = slaMinUploadMbps.trim() ? parseInt(slaMinUploadMbps, 10) : null;
+      const slaMaxL = slaMaxLatencyMs.trim() ? parseInt(slaMaxLatencyMs, 10) : null;
       const r = await putConfig({
         site_url: siteUrl.trim(),
         ssl_cert_path: sslCertPath.trim(),
@@ -170,6 +195,14 @@
         ookla_servers: formToOokla(ooklaServers),
         iperf_servers: iperfServers.map((s) => ({ host: s.host.trim() || 'localhost', label: s.label.trim() || 'Server' })),
         iperf_tests: iperfTests.map((t) => ({ name: (t.name || 'test').trim(), args: (t.args || '').trim() })),
+        probe_id: probeId.trim(),
+        location_name: locationName.trim(),
+        region: region.trim(),
+        tier: tier.trim(),
+        sla_thresholds: { min_download_mbps: slaMinD, min_upload_mbps: slaMinU, max_latency_ms: slaMaxL },
+        webhook_url: webhookUrl.trim(),
+        webhook_secret: webhookSecret.trim(),
+        retention_days: retentionDays.trim() ? parseInt(retentionDays, 10) || null : null,
       });
       if (r.ok) {
         message = 'Saved.';
@@ -183,6 +216,27 @@
       message = 'Request failed.';
       messageType = 'danger';
       onToast('Failed to save configuration.', 'error');
+    }
+  }
+
+  async function checkSlaNow() {
+    checkSlaLoading = true;
+    message = '';
+    try {
+      const r = await checkSla();
+      if (r.ok) {
+        message = r.message || 'SLA check completed.';
+        messageType = 'success';
+        onToast('SLA check completed.');
+      } else {
+        message = r.error || 'SLA check failed.';
+        messageType = 'danger';
+      }
+    } catch (e) {
+      message = e instanceof Error ? e.message : 'Request failed.';
+      messageType = 'danger';
+    } finally {
+      checkSlaLoading = false;
     }
   }
 </script>
@@ -214,6 +268,28 @@
       <label class="form-label" for="cron">Cron schedule</label>
       <p class="form-text text-muted small">When the scheduler is started, tests run at this time (e.g. <code>5 * * * *</code> = 5 min past every hour).</p>
       <input id="cron" type="text" class="form-control form-control-sm font-monospace" style="max-width:200px" bind:value={cronSchedule} placeholder="5 * * * *" />
+    </div>
+
+    <hr class="my-4" />
+    <h2 class="h6 mb-3">Probe identity (ISP / multi-site)</h2>
+    <p class="form-text text-muted small mb-2">Identify this probe for aggregation and reporting. Optional.</p>
+    <div class="row g-2 mb-3">
+      <div class="col-md-3">
+        <label class="form-label small" for="probe-id">Probe ID</label>
+        <input id="probe-id" type="text" class="form-control form-control-sm" bind:value={probeId} placeholder="e.g. pop-chicago-1" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small" for="location-name">Location name</label>
+        <input id="location-name" type="text" class="form-control form-control-sm" bind:value={locationName} placeholder="e.g. Chicago POP" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="region">Region</label>
+        <input id="region" type="text" class="form-control form-control-sm" bind:value={region} placeholder="e.g. Midwest" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="tier">Tier</label>
+        <input id="tier" type="text" class="form-control form-control-sm" bind:value={tier} placeholder="e.g. 1G" />
+      </div>
     </div>
 
     <hr class="my-4" />
@@ -320,6 +396,45 @@
         </div>
       {/each}
       <button type="button" class="btn btn-outline-primary btn-sm" on:click={addIperfTest}><i class="bi bi-plus-lg me-1"></i> Add test</button>
+    </div>
+
+    <hr class="my-4" />
+    <h2 class="h6 mb-3">SLA &amp; alerts</h2>
+    <p class="form-text text-muted small mb-2">When results fall below these thresholds, a webhook is fired (15 min cooldown). Leave empty to disable.</p>
+    <div class="row g-2 mb-2">
+      <div class="col-auto">
+        <label class="form-label small mb-0" for="sla-min-down">Min download (Mbps)</label>
+        <input id="sla-min-down" type="number" min="0" class="form-control form-control-sm" style="width:6rem" bind:value={slaMinDownloadMbps} placeholder="—" />
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0" for="sla-min-up">Min upload (Mbps)</label>
+        <input id="sla-min-up" type="number" min="0" class="form-control form-control-sm" style="width:6rem" bind:value={slaMinUploadMbps} placeholder="—" />
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0" for="sla-max-lat">Max latency (ms)</label>
+        <input id="sla-max-lat" type="number" min="0" class="form-control form-control-sm" style="width:6rem" bind:value={slaMaxLatencyMs} placeholder="—" />
+      </div>
+    </div>
+    <div class="mb-2">
+      <label class="form-label small" for="webhook-url">Webhook URL</label>
+      <input id="webhook-url" type="url" class="form-control form-control-sm font-monospace" bind:value={webhookUrl} placeholder="https://…" />
+    </div>
+    <div class="mb-3">
+      <label class="form-label small" for="webhook-secret">Webhook secret (optional)</label>
+      <input id="webhook-secret" type="password" class="form-control form-control-sm font-monospace" style="max-width:280px" bind:value={webhookSecret} placeholder="Sent as X-Webhook-Secret header" autocomplete="off" />
+    </div>
+    <div class="mb-3">
+      <button type="button" class="btn btn-outline-secondary btn-sm" on:click={checkSlaNow} disabled={checkSlaLoading} title="Run SLA evaluation now (compare latest results to thresholds, fire webhook if violated)">
+        {checkSlaLoading ? 'Checking…' : 'Check SLA now'}
+      </button>
+    </div>
+
+    <hr class="my-4" />
+    <h2 class="h6 mb-3">Data retention</h2>
+    <p class="form-text text-muted small mb-2">Keep data for this many days. When using <strong>Purge old data</strong> in Setup without a custom days value, this is used (empty = 30).</p>
+    <div class="mb-3">
+      <label class="form-label small" for="retention-days">Retention (days)</label>
+      <input id="retention-days" type="number" min="1" max="365" class="form-control form-control-sm" style="width:6rem" bind:value={retentionDays} placeholder="e.g. 90 or empty" />
     </div>
 
     <div class="d-flex flex-wrap align-items-center gap-2">

@@ -3,6 +3,19 @@
   "ssl_cert_path": "/etc/letsencrypt/live/hss.wisptools.io/fullchain.pem",
   "ssl_key_path": "/etc/letsencrypt/live/hss.wisptools.io/privkey.pem",
   "speedtest_limit_mbps": null,
+  "probe_id": "",
+  "location_name": "",
+  "region": "",
+  "tier": "",
+  "sla_thresholds": {
+    "min_download_mbps": null,
+    "min_upload_mbps": null,
+    "max_latency_ms": null
+  },
+  "webhook_url": "",
+  "webhook_secret": "",
+  "retention_days": null,
+  "auth_users": [],
   "ookla_servers": [
     { "id": "auto", "label": "Local" },
     { "id": 10171, "label": "FL" },
