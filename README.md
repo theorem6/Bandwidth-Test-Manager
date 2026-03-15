@@ -57,15 +57,16 @@ Example: `./deploy-gce.sh acs-hss-server us-central1-a`
 
 **Deploy from Windows**
 
-- **Option A (recommended):** Use WSL or Git Bash so you can run the same deploy script. Install [WSL](https://docs.microsoft.com/en-us/windows/wsl/install) or [Git for Windows](https://git-scm.com/download/win), then from the project directory run: `bash deploy-gce.sh INSTANCE_NAME [ZONE] [PROJECT]`.
-- **Option B (no bash on Windows):** Deploy from the server. SSH into the instance, clone the repo, build the frontend, then run the install script:
+- **Option A (PowerShell):** From the project directory run: `.\deploy-gce.ps1 INSTANCE_NAME [ZONE] [PROJECT]` (e.g. `.\deploy-gce.ps1 acs-hss-server us-central1-a`). If you see a reauth error, run `gcloud auth login` in a terminal first.
+- **Option B (bash):** Use WSL or Git Bash and run: `bash deploy-gce.sh INSTANCE_NAME [ZONE] [PROJECT]`.
+- **Option C (from server):** SSH into the instance, then clone (or pull) and install:
   ```bash
   git clone https://github.com/theorem6/Bandwidth-Test-Manager.git
   cd Bandwidth-Test-Manager
   cd web/frontend && npm install && npm run build && cd ../..
   sudo ./install.sh
   ```
-  Existing `/etc/netperf/config.json` is kept. Afterward, start the scheduler if needed: `sudo netperf-scheduler start`.
+  Existing `/etc/netperf/config.json` is kept. Start the scheduler if needed: `sudo netperf-scheduler start`.
 
 - **Update existing deployment (from server):** If the repo is already on the server, pull and reinstall the web app:
   ```bash

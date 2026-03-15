@@ -1,5 +1,7 @@
+import './lib/theme.css';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import 'bootstrap-icons/font/bootstrap-icons.css';
+import './lib/global.css';
 import App from './App.svelte';
 import { Chart, registerables } from 'chart.js';
 

@@ -63,6 +63,14 @@ fi
 
 echo "Using certificate: $SSL_CERT"
 
+# Use port netperf-web is actually listening on (default 8080)
+WEB_PORT="8080"
+if [ -f /etc/systemd/system/netperf-web.service ]; then
+  _p=$(grep -E 'Environment=PORT=' /etc/systemd/system/netperf-web.service 2>/dev/null | sed -n 's/.*PORT=\([0-9]*\).*/\1/p' | head -1)
+  [ -n "$_p" ] && WEB_PORT="$_p"
+fi
+echo "Proxying to netperf-web on port $WEB_PORT"
+
 apt-get install -y nginx 2>/dev/null || true
 
 SERVER_NAME="_"
@@ -89,7 +97,7 @@ server {
     client_max_body_size 1M;
 
     location /netperf/ {
-        proxy_pass http://127.0.0.1:8080/;
+        proxy_pass http://127.0.0.1:${WEB_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -101,7 +109,7 @@ server {
         return 301 \$scheme://\$host/netperf/;
     }
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:${WEB_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -113,27 +121,27 @@ EOF
 
 # Install snippets for inclusion in an existing server block
 mkdir -p /etc/nginx/snippets
-cat > /etc/nginx/snippets/netperf-proxy.conf << 'SNIP'
+cat > /etc/nginx/snippets/netperf-proxy.conf << SNIP
 location / {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://127.0.0.1:${WEB_PORT};
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
 }
 SNIP
-cat > /etc/nginx/snippets/netperf-path.conf << 'SNIP'
+cat > /etc/nginx/snippets/netperf-path.conf << SNIP
 location = /netperf {
-    return 301 $scheme://$host/netperf/;
+    return 301 \$scheme://\$host/netperf/;
 }
 location /netperf/ {
-    proxy_pass http://127.0.0.1:8080/;
+    proxy_pass http://127.0.0.1:${WEB_PORT}/;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_set_header X-Forwarded-Prefix /netperf;
 }
 SNIP

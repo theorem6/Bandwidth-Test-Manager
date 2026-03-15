@@ -2,6 +2,13 @@
   import { onMount } from 'svelte';
   import { getConfig, putConfig, getSpeedtestServers, checkSla } from './lib/api';
   import type { Config, OoklaServer, IperfServer, IperfTest, SpeedtestServerOption } from './lib/api';
+  import { themeMode, setTheme, type ThemeMode } from './lib/theme';
+
+  const themeOptions: { value: ThemeMode; label: string; icon: string }[] = [
+    { value: 'light', label: 'Light', icon: 'bi-sun' },
+    { value: 'dark', label: 'Dark', icon: 'bi-moon' },
+    { value: 'system', label: 'System', icon: 'bi-circle-half' },
+  ];
 
   export let onToast: (msg: string, type?: 'success' | 'error') => void;
 
@@ -241,8 +248,25 @@
   }
 </script>
 
+<!-- Appearance: light / dark / system -->
+<div class="card mb-4">
+  <div class="card-header">Appearance</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">Choose how the interface looks. System follows your device’s light/dark preference.</p>
+    <div class="d-flex flex-wrap gap-3 align-items-center">
+      {#each themeOptions as opt}
+        <label class="d-flex align-items-center gap-2 cursor-pointer mb-0">
+          <input type="radio" name="theme-mode" value={opt.value} checked={$themeMode === opt.value} on:change={() => setTheme(opt.value)} />
+          <i class="bi {opt.icon}"></i>
+          <span>{opt.label}</span>
+        </label>
+      {/each}
+    </div>
+  </div>
+</div>
+
 <div class="card">
-  <div class="card-header text-dark">Configuration</div>
+  <div class="card-header">Configuration</div>
   <div class="card-body">
     <p class="text-muted small mb-4">All settings are configured from this page. Use <strong>Setup</strong> to install Ookla and iperf3 on the server, then configure servers and tests here.</p>
 
@@ -447,6 +471,6 @@
 </div>
 
 <style>
-  :global(.card) { border: none; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
-  :global(.card-header) { background: #fff; border-bottom: 1px solid #eee; font-weight: 600; padding: 0.75rem 1rem; }
+  :global(.card) { border-radius: var(--radius-lg); }
+  :global(.card-header) { font-weight: var(--font-weight-semibold); }
 </style>

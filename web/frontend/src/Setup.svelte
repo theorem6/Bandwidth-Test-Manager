@@ -472,6 +472,6 @@
 </div>
 
 <style>
-  :global(.card) { border: none; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
-  :global(.card-header) { background: #fff; border-bottom: 1px solid #eee; font-weight: 600; padding: 0.75rem 1rem; }
+  :global(.card) { border-radius: var(--radius-lg); }
+  :global(.card-header) { font-weight: var(--font-weight-semibold); }
 </style>

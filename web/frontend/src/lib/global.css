@@ -1,0 +1,294 @@
+/**
+ * WISPTools global styles for Bandwidth Test Manager
+ * Uses theme.css variables; overrides Bootstrap to match WISPTools look.
+ */
+
+/* Legacy / compatibility mappings (WISPTools app.css) */
+:root {
+  --bg-primary: var(--color-background-primary);
+  --bg-secondary: var(--color-background-secondary);
+  --bg-tertiary: var(--color-background-tertiary);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-tertiary);
+  --text-inverse: var(--color-text-inverse);
+  --border-color: var(--color-border);
+  --border-light: var(--color-border-light);
+  --card-bg: var(--color-background-primary);
+  --input-bg: var(--color-background-secondary);
+  --hover-bg: var(--color-background-secondary);
+  --focus-bg: var(--color-background-tertiary);
+  --primary: var(--color-primary);
+  --primary-color: var(--color-primary);
+  --primary-hover: var(--color-primary-hover);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --danger: var(--color-danger);
+  --info: var(--color-info);
+  --border-radius: var(--radius-md);
+  --border-radius-sm: var(--radius-sm);
+  --border-radius-lg: var(--radius-lg);
+  --shadow-xs: var(--shadow-sm);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --transition: var(--transition);
+}
+
+/* Base */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  line-height: var(--line-height-normal);
+  color: var(--color-text-primary);
+  background: var(--color-background-primary);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Bootstrap overrides – WISPTools theme */
+:root {
+  --bs-primary: var(--color-primary);
+  --bs-primary-rgb: 0, 217, 255;
+  --bs-secondary: var(--color-secondary);
+  --bs-success: var(--color-success);
+  --bs-warning: var(--color-warning);
+  --bs-danger: var(--color-danger);
+  --bs-info: var(--color-info);
+  --bs-light: var(--color-background-tertiary);
+  --bs-dark: var(--color-gray-800);
+  --bs-body-color: var(--color-text-primary);
+  --bs-body-bg: var(--color-background-primary);
+  --bs-border-color: var(--color-border);
+  --bs-card-bg: var(--color-background-secondary);
+  --bs-link-color: var(--color-primary);
+  --bs-link-hover-color: var(--color-primary-hover);
+}
+
+[data-theme="dark"] {
+  --bs-body-color: var(--color-text-primary);
+  --bs-body-bg: var(--color-background-primary);
+  --bs-border-color: var(--color-border);
+  --bs-card-bg: var(--color-background-primary);
+}
+
+/* Light theme: ensure Bootstrap vars and navbar match */
+[data-theme="light"] {
+  --bs-primary-rgb: 8, 145, 178;
+}
+
+/* Cards – WISPTools style */
+.bwm-card,
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-header {
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.card-body {
+  color: var(--color-text-primary);
+  padding: var(--spacing-lg);
+}
+
+/* Buttons – align with theme */
+.btn-primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.btn-primary:hover {
+  background-color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+.btn-outline-primary {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.btn-outline-primary:hover {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-inverse);
+}
+.btn-success { background-color: var(--color-success); border-color: var(--color-success); }
+.btn-warning { background-color: var(--color-warning); border-color: var(--color-warning); }
+.btn-danger { background-color: var(--color-danger); border-color: var(--color-danger); }
+
+/* Navbar – theme-aware */
+.navbar.bg-primary {
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+[data-theme="dark"] .navbar.bg-primary {
+  background: linear-gradient(90deg, #1a2332 0%, #1e3a4f 100%) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+[data-theme="light"] .navbar.bg-primary {
+  background: var(--color-background-secondary) !important;
+  color: var(--color-text-primary);
+}
+[data-theme="light"] .navbar .brand-title {
+  background: none;
+  -webkit-text-fill-color: var(--color-primary);
+  color: var(--color-primary);
+}
+[data-theme="light"] .navbar .brand-subtitle {
+  color: var(--color-text-secondary);
+}
+
+/* Sidebar – light theme */
+[data-theme="light"] .sidebar {
+  background: var(--color-background-secondary) !important;
+}
+[data-theme="light"] .sidebar .nav-link {
+  color: var(--color-text-primary) !important;
+}
+[data-theme="light"] .sidebar .nav-link:hover {
+  background: var(--color-background-tertiary) !important;
+  color: var(--color-text-primary) !important;
+}
+[data-theme="light"] .sidebar .nav-link.active {
+  background: rgba(8, 145, 178, 0.2) !important;
+  color: var(--color-primary) !important;
+}
+
+.navbar .brand-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.navbar .wisptools-logo {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 8px rgba(0, 217, 255, 0.4));
+}
+
+.navbar .brand-title {
+  font-weight: 700;
+  background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: 0.5px;
+}
+
+.navbar .brand-subtitle {
+  font-size: 0.8rem;
+  color: var(--color-primary);
+  margin: 0;
+  font-weight: 500;
+}
+
+/* Text utilities – use theme colors (avoid Bootstrap’s fixed dark/muted on wrong background) */
+.text-dark {
+  color: var(--color-text-primary) !important;
+}
+.text-muted,
+.form-text.text-muted {
+  color: var(--color-text-tertiary) !important;
+}
+.text-secondary {
+  color: var(--color-text-secondary) !important;
+}
+.form-label {
+  color: var(--color-text-primary);
+}
+
+/* Form controls */
+.form-control,
+.form-select {
+  background: var(--input-bg);
+  border-color: var(--border-color);
+  color: var(--color-text-primary);
+}
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 0.2rem rgba(59, 130, 246, 0.25);
+}
+.form-control::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* Modal – WISPTools modal.css */
+.modal-backdrop.show {
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(6px);
+}
+.modal-content {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text-primary);
+}
+.modal-header {
+  border-bottom: 1px solid var(--border-light);
+  background: var(--color-background-secondary);
+}
+.modal-body {
+  background: var(--card-bg);
+  color: var(--color-text-primary);
+}
+.modal-footer {
+  border-top: 1px solid var(--border-light);
+  background: var(--color-background-secondary);
+}
+
+/* Focus (accessibility) */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Loading spinner – WISPTools */
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid var(--border-color);
+  border-top: 4px solid var(--color-primary);
+  border-radius: 50%;
+  animation: bwm-spin 1s linear infinite;
+}
+@keyframes bwm-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Badge / status dot */
+.badge-dot.running {
+  background: var(--color-success);
+}
+.badge-dot.stopped {
+  background: var(--color-gray-400);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

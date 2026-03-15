@@ -7,6 +7,7 @@
   import { getStatus, schedulerStart, schedulerStop, loginWithCredentials } from './lib/api';
   import { auth } from './lib/auth';
   import { loading } from './lib/stores';
+  import { initTheme } from './lib/theme';
 
   type View = 'dashboard' | 'scheduler' | 'settings' | 'setup';
   let currentView: View = 'dashboard';
@@ -91,6 +92,7 @@
   }
 
   onMount(() => {
+    initTheme();
     loadStatus();
     const id = setInterval(loadStatus, 30000);
     return () => clearInterval(id);
@@ -110,7 +112,13 @@
         >
           <i class="bi bi-list" style="font-size:1.5rem"></i>
         </button>
-        <a class="navbar-brand fw-bold" href="/netperf/"><i class="bi bi-speedometer2 me-2"></i>Bandwidth Test Manager</a>
+        <a class="navbar-brand brand-wrap text-decoration-none d-flex align-items-center" href="/netperf/">
+          <img src="/netperf/static/wisptools-logo.svg" alt="wisptools.io" class="wisptools-logo" />
+          <div>
+            <span class="brand-title">Bandwidth Test Manager</span>
+            <p class="brand-subtitle mb-0">wisptools.io</p>
+          </div>
+        </a>
         <div class="navbar-nav ms-auto align-items-center">
           <span class="navbar-text me-2 me-md-3">
             <span class="badge-dot {scheduled ? 'running' : 'stopped'}"></span>
@@ -142,7 +150,7 @@
       </aside>
 
       <main class="content">
-        <h1 class="h4 mb-3 mb-md-4 text-dark">
+        <h1 class="h4 mb-3 mb-md-4 page-title">
           {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : 'Setup'}
         </h1>
         {#if currentView === 'dashboard'}
@@ -158,35 +166,25 @@
     </div>
   </div>
 {:else}
-  <!-- Landing: read-only dashboard, no menu, toggle + Login button -->
+  <!-- Landing: read-only dashboard, Login only (no schedule toggle without login) -->
   <div class="app landing">
     <nav class="navbar navbar-expand navbar-dark bg-primary">
       <div class="container-fluid">
-        <a class="navbar-brand fw-bold" href="/netperf/"><i class="bi bi-speedometer2 me-2"></i>Bandwidth Test Manager</a>
-        <div class="navbar-nav ms-auto align-items-center gap-2">
-          <span class="navbar-text me-2">
-            <span class="badge-dot {scheduled ? 'running' : 'stopped'}"></span>
-            <span>{scheduled ? 'Tests on' : 'Tests off'}</span>
-          </span>
-          <button
-            type="button"
-            class="btn btn-sm {scheduled ? 'btn-outline-light' : 'btn-light'}"
-            disabled={scheduleBusy}
-            on:click={toggleSchedule}
-            title={scheduled ? 'Stop scheduled tests' : 'Start scheduled tests'}
-          >
-            {#if scheduleBusy}
-              <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-            {/if}
-            {scheduled ? 'Turn off' : 'Turn on'}
-          </button>
+        <a class="navbar-brand brand-wrap text-decoration-none d-flex align-items-center" href="/netperf/">
+          <img src="/netperf/static/wisptools-logo.svg" alt="wisptools.io" class="wisptools-logo" />
+          <div>
+            <span class="brand-title">Bandwidth Test Manager</span>
+            <p class="brand-subtitle mb-0">wisptools.io</p>
+          </div>
+        </a>
+        <div class="navbar-nav ms-auto align-items-center">
           <button type="button" class="btn btn-light btn-sm" on:click={() => (showLoginModal = true)}>Login</button>
         </div>
       </div>
     </nav>
 
     <main class="content content-full">
-      <h1 class="h4 mb-3 mb-md-4 text-dark">Dashboard</h1>
+      <h1 class="h4 mb-3 mb-md-4 page-title">Dashboard</h1>
       <Dashboard onToast={setToast} showAdminActions={false} />
     </main>
   </div>
@@ -237,37 +235,107 @@
 {/if}
 
 <style>
-  :global(body) { background: #f0f2f5; min-height: 100vh; overflow-x: hidden; margin: 0; }
+  :global(body) {
+    background: var(--color-background-secondary);
+    min-height: 100vh;
+    overflow-x: hidden;
+    margin: 0;
+  }
   .app { min-height: 100vh; }
   .app.landing .content-full { max-width: 1400px; margin: 0 auto; }
-  :global(.navbar) { box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .page-title { color: var(--color-text-primary); }
+  :global(.navbar) { box-shadow: var(--shadow-sm); }
   .sidebar {
-    width: 220px; min-height: calc(100vh - 56px); background: #1e3a5f; flex-shrink: 0;
-    transition: transform 0.2s ease;
+    width: 220px;
+    min-height: calc(100vh - 56px);
+    background: linear-gradient(180deg, #1a2332 0%, #1e3a4f 100%);
+    flex-shrink: 0;
+    transition: transform var(--transition);
   }
   :global(.sidebar .nav-link) {
-    color: rgba(255,255,255,.85); padding: 0.6rem 1rem; border-radius: 8px; margin: 2px 8px;
+    color: rgba(255, 255, 255, 0.9);
+    padding: 0.6rem 1rem;
+    border-radius: var(--radius-md);
+    margin: 2px 8px;
   }
-  :global(.sidebar .nav-link:hover) { background: rgba(255,255,255,.1); color: #fff; }
-  :global(.sidebar .nav-link.active) { background: #0d6efd; color: #fff; }
+  :global(.sidebar .nav-link:hover) {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+  }
+  :global(.sidebar .nav-link.active) {
+    background: rgba(0, 217, 255, 0.2);
+    color: #fff;
+  }
   :global(.sidebar .nav-link i) { margin-right: 10px; }
-  .content { flex: 1; min-width: 0; padding: 1rem 1.25rem; max-width: 1400px; }
-  :global(.badge-dot) { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-  :global(.badge-dot.running) { background: #198754; }
-  :global(.badge-dot.stopped) { background: #6c757d; }
-  .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 40; border: none; cursor: pointer; }
+  .content { flex: 1; min-width: 0; padding: var(--spacing-lg); max-width: 1400px; }
+  :global(.badge-dot) {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    display: inline-block;
+    margin-right: 6px;
+  }
+  :global(.badge-dot.running) { background: var(--color-success); }
+  :global(.badge-dot.stopped) { background: var(--color-gray-400); }
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: var(--modal-backdrop-color, rgba(15, 23, 42, 0.5));
+    z-index: 40;
+    border: none;
+    cursor: pointer;
+  }
   .sidebar-backdrop.open { display: block; }
   .modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 9998; display: flex; align-items: center; justify-content: center; padding: 1rem;
+    position: fixed;
+    inset: 0;
+    background: var(--modal-backdrop-color, rgba(15, 23, 42, 0.55));
+    backdrop-filter: blur(6px);
+    z-index: 9998;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-lg);
   }
-  .modal-card { width: 100%; max-width: 360px; border: none; border-radius: 12px; }
-  .toast-msg { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 9999; max-width: 90vw; }
+  .modal-card {
+    width: 100%;
+    max-width: 360px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    background: var(--card-bg);
+  }
+  .toast-msg {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    max-width: 90vw;
+  }
   .loading-overlay {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,.4); z-index: 9999; display: flex; align-items: center; justify-content: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.5);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   @media (max-width: 991.98px) {
-    .sidebar { position: fixed; top: 56px; left: 0; bottom: 0; z-index: 50; transform: translateX(-100%); box-shadow: 4px 0 12px rgba(0,0,0,.15); }
+    .sidebar {
+      position: fixed;
+      top: 56px;
+      left: 0;
+      bottom: 0;
+      z-index: 50;
+      transform: translateX(-100%);
+      box-shadow: var(--shadow-xl);
+    }
     .sidebar.open { transform: translateX(0); }
     .sidebar-backdrop.open { display: block; }
   }
