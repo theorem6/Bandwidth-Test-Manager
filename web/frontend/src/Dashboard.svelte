@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { Chart } from 'chart.js';
+  import zoomPlugin from 'chartjs-plugin-zoom';
   import { getDates, getData, getHealth, getBase, getRunStatus, getHistory, authHeaders, getExportCsvBlob, getSummaryCsvBlob } from './lib/api';
+
+  Chart.register(zoomPlugin);
   import { formatValue, formatDate, formatDateShort, formatDateTimeShort } from './lib/format';
   import { loading } from './lib/stores';
   import type { SpeedtestPoint, IperfPoint, DataResponse, HistoryResponse } from './lib/api';
@@ -25,6 +28,7 @@
   let historyData: HistoryResponse = { speedtest: [], iperf: [] };
   let historyLoading = false;
   let historyDays = 30;
+  let timeRangeFilter: 'full' | '6h' | '12h' = 'full';
   let csvDownloading = false;
   let summaryDownloading = false;
   let trendDownloadCanvas: HTMLCanvasElement;
@@ -57,8 +61,53 @@
   let latencyChartInst: Chart | null = null;
   let iperfChartInst: Chart | null = null;
 
-  /** Combined over time: all sites, x = sorted timestamps (date and time) or Run 1, Run 2 if no timestamps. */
-  function buildSpeedtestOverTime(data: Record<string, SpeedtestPoint[]>, key: 'download_bps' | 'upload_bps' | 'latency_ms') {
+  /** Today as YYYYMMDD for extend-to-now check */
+  function todayYmd(): string {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  }
+
+  /** Filter data to time window: full day, or last 6h/12h of selected day (or from now if today). */
+  function filterByTimeRange<T extends { timestamp?: string | null }>(
+    data: Record<string, T[]>,
+    selectedDate: string,
+    range: 'full' | '6h' | '12h'
+  ): Record<string, T[]> {
+    if (range === 'full') return data;
+    const isToday = selectedDate === todayYmd();
+    const now = Date.now();
+    const ms = range === '6h' ? 6 * 60 * 60 * 1000 : 12 * 60 * 60 * 1000;
+    let minMs: number;
+    let maxMs: number;
+    if (isToday) {
+      maxMs = now;
+      minMs = now - ms;
+    } else {
+      const [y, m, d] = [selectedDate.slice(0, 4), selectedDate.slice(4, 6), selectedDate.slice(6, 8)];
+      const endOfDay = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10), 23, 59, 59, 999).getTime();
+      maxMs = endOfDay;
+      minMs = endOfDay - ms;
+    }
+    const out: Record<string, T[]> = {};
+    for (const site of Object.keys(data)) {
+      const points = (data[site] || []).filter((p) => {
+        const t = p.timestamp ? new Date(p.timestamp).getTime() : NaN;
+        return !Number.isNaN(t) && t >= minMs && t <= maxMs;
+      });
+      if (points.length) out[site] = points;
+    }
+    return out;
+  }
+
+  /** Combined over time: all sites, x = sorted timestamps. If extendToNow (and viewing today), add current time so line holds last speed to now. */
+  function buildSpeedtestOverTime(
+    data: Record<string, SpeedtestPoint[]>,
+    key: 'download_bps' | 'upload_bps' | 'latency_ms',
+    extendToNow = false
+  ) {
     const sites = Object.keys(data).filter((site) => (data[site] || []).length > 0);
     if (sites.length === 0) return { labels: [] as string[], datasets: [] };
 
@@ -70,6 +119,7 @@
       allPoints.forEach((p) => {
         if (p.timestamp && String(p.timestamp).trim()) timeSet.add(p.timestamp);
       });
+      if (extendToNow) timeSet.add(new Date().toISOString());
       const labels = Array.from(timeSet).sort();
       const displayLabels = labels.map(formatDateTimeShort);
       const datasets = sites.map((site, i) => {
@@ -78,9 +128,14 @@
           const v = (p as unknown as Record<string, number>)[key];
           if (p.timestamp != null && v != null) valueByTime[p.timestamp] = v;
         });
+        let values = labels.map((t) => valueByTime[t] ?? null);
+        if (extendToNow && values.length > 0) {
+          const lastKnown = [...values].reverse().find((v) => v != null);
+          if (lastKnown != null) values[values.length - 1] = lastKnown;
+        }
         return {
           label: site,
-          data: labels.map((t) => valueByTime[t] ?? null),
+          data: values,
           borderColor: COLORS[i % COLORS.length],
           backgroundColor: COLORS[i % COLORS.length] + '30',
           borderWidth: 3,
@@ -118,8 +173,8 @@
     return { labels: runLabels, datasets };
   }
 
-  /** Combined over time: all iperf series, x = date/time if timestamps present, else Run 1, Run 2, ... */
-  function buildIperfOverTime(data: Record<string, IperfPoint[]>) {
+  /** Combined over time: all iperf series. If extendToNow (viewing today), line holds last value to now. */
+  function buildIperfOverTime(data: Record<string, IperfPoint[]>, extendToNow = false) {
     const sites = Object.keys(data).filter((k) => (data[k] || []).length > 0);
     const allPoints = sites.flatMap((site) => (data[site] || []).map((p) => ({ ...p, site })));
     const hasTimestamps = allPoints.some((p) => p.timestamp);
@@ -128,6 +183,7 @@
       allPoints.forEach((p) => {
         if (p.timestamp) timeSet.add(p.timestamp);
       });
+      if (extendToNow) timeSet.add(new Date().toISOString());
       const labels = Array.from(timeSet).sort();
       const displayLabels = labels.map(formatDateTimeShort);
       const datasets = sites.map((site, i) => {
@@ -135,9 +191,14 @@
         (data[site] || []).forEach((p) => {
           if (p.timestamp != null && p.bits_per_sec != null) valueByTime[p.timestamp] = p.bits_per_sec;
         });
+        let values = labels.map((t) => valueByTime[t] ?? null);
+        if (extendToNow && values.length > 0) {
+          const lastKnown = [...values].reverse().find((v) => v != null);
+          if (lastKnown != null) values[values.length - 1] = lastKnown;
+        }
         return {
           label: site,
-          data: labels.map((t) => valueByTime[t] ?? null),
+          data: values,
           borderColor: COLORS[i % COLORS.length],
           backgroundColor: COLORS[i % COLORS.length] + '30',
           borderWidth: 3,
@@ -173,8 +234,11 @@
     return { labels: runLabels, datasets };
   }
 
-  $: speedtestSites = Object.keys(speedtestData).filter((s) => (speedtestData[s] || []).length > 0);
-  $: iperfSites = Object.keys(iperfData).filter((s) => (iperfData[s] || []).length > 0);
+  $: filteredSpeedtestData = selectedDate ? filterByTimeRange(speedtestData, selectedDate, timeRangeFilter) : speedtestData;
+  $: filteredIperfData = selectedDate ? filterByTimeRange(iperfData, selectedDate, timeRangeFilter) : iperfData;
+  $: extendToNow = !!selectedDate && selectedDate === todayYmd();
+  $: speedtestSites = Object.keys(filteredSpeedtestData).filter((s) => (filteredSpeedtestData[s] || []).length > 0);
+  $: iperfSites = Object.keys(filteredIperfData).filter((s) => (filteredIperfData[s] || []).length > 0);
   $: hasSpeedtest = speedtestSites.length > 0;
   $: hasIperf = iperfSites.length > 0;
   $: hasAnyData = hasSpeedtest || hasIperf;
@@ -225,6 +289,11 @@
           tooltip: {
             callbacks: { label: (ctx: { dataset: { label?: string }; parsed: { y: number | null } }) => (ctx.dataset.label || '') + ': ' + formatValue(ctx.parsed.y, metric) },
           },
+          zoom: {
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+            pan: { enabled: true, mode: 'x' },
+            limits: { x: { min: 'original', max: 'original' } },
+          },
         },
         scales: {
           x: {
@@ -242,31 +311,39 @@
     });
   }
 
+  function resetChartsZoom() {
+    for (const ch of [downloadChartInst, uploadChartInst, latencyChartInst, iperfChartInst]) {
+      if (ch && typeof (ch as Chart & { resetZoom?: () => void }).resetZoom === 'function') {
+        (ch as Chart & { resetZoom: () => void }).resetZoom();
+      }
+    }
+  }
+
   function doRenderCharts() {
     if (downloadChartInst) { downloadChartInst.destroy(); downloadChartInst = null; }
     if (uploadChartInst) { uploadChartInst.destroy(); uploadChartInst = null; }
     if (latencyChartInst) { latencyChartInst.destroy(); latencyChartInst = null; }
     if (iperfChartInst) { iperfChartInst.destroy(); iperfChartInst = null; }
     if (downloadCanvas && hasSpeedtest) {
-      const { labels, datasets } = buildSpeedtestOverTime(speedtestData, 'download_bps');
+      const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'download_bps', extendToNow);
       if (labels.length && datasets.length) {
         downloadChartInst = renderChart(downloadCanvas, labels, datasets, 'download_bps', 'Download (Mbps)');
       }
     }
     if (uploadCanvas && hasSpeedtest) {
-      const { labels, datasets } = buildSpeedtestOverTime(speedtestData, 'upload_bps');
+      const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'upload_bps', extendToNow);
       if (labels.length && datasets.length) {
         uploadChartInst = renderChart(uploadCanvas, labels, datasets, 'upload_bps', 'Upload (Mbps)');
       }
     }
     if (latencyCanvas && hasSpeedtest) {
-      const { labels, datasets } = buildSpeedtestOverTime(speedtestData, 'latency_ms');
+      const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'latency_ms', extendToNow);
       if (labels.length && datasets.length) {
         latencyChartInst = renderChart(latencyCanvas, labels, datasets, 'latency_ms', 'Latency (ms)');
       }
     }
     if (iperfCanvas && hasIperf) {
-      const { labels, datasets } = buildIperfOverTime(iperfData);
+      const { labels, datasets } = buildIperfOverTime(filteredIperfData, extendToNow);
       if (labels.length && datasets.length) {
         iperfChartInst = renderChart(iperfCanvas, labels, datasets, 'bits_per_sec', 'Throughput (Mbps)');
       }
@@ -289,9 +366,9 @@
       });
     });
   }
-  /* Depend on data so charts refresh when loadData() updates speedtestData/iperfData. */
-  $: dataVersion = { s: speedtestData, i: iperfData };
-  $: if (selectedDate && (hasSpeedtest || hasIperf) && dataVersion) void updateCharts();
+  /* Depend on data and time filter so charts refresh when data or range changes. */
+  $: dataVersion = { s: speedtestData, i: iperfData, range: timeRangeFilter, date: selectedDate };
+  $: if (selectedDate && dataVersion) void updateCharts();
 
   async function checkConnection() {
     connectionError = '';
@@ -562,6 +639,15 @@
             <option value={d}>{formatDate(d)}</option>
           {/each}
         </select>
+        {#if selectedDate}
+          <label for="dashboard-time-range" class="form-label mb-0 small text-muted ms-2">Range</label>
+          <select id="dashboard-time-range" class="form-select form-select-sm" style="max-width:120px" bind:value={timeRangeFilter}>
+            <option value="full">Full day</option>
+            <option value="12h">Last 12 hours</option>
+            <option value="6h">Last 6 hours</option>
+          </select>
+          <button type="button" class="btn btn-sm btn-outline-secondary ms-1" on:click={resetChartsZoom} title="Reset pan/zoom to full view">Reset zoom</button>
+        {/if}
         {#if showAdminActions}
           <button type="button" class="btn btn-sm btn-primary" on:click={handleRunNow} disabled={runNowLoading} title="Run all configured Speedtest and iperf3 tests now (results in 1–2 min)">
             {#if runNowLoading}
@@ -615,7 +701,7 @@
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No Speedtest data for this date. Use <strong>Run test now</strong> or the <strong>Scheduler</strong> to run tests.</p></div>
       {:else}
         <div class="chart-wrap chart-fixed"><canvas bind:this={downloadCanvas}></canvas></div>
-        <p class="small text-muted mt-2 mb-0">All sites over time. Click legend to toggle.</p>
+        <p class="small text-muted mt-2 mb-0">All sites over time. Drag to pan, scroll to zoom. Click legend to toggle.</p>
       {/if}
     </div>
   </section>

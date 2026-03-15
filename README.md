@@ -26,7 +26,7 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
    - Open the **Site URL** from Settings (e.g. `https://your-server.netperf/`). Use HTTPS with no port in the URL; run `sudo ./web/setup-https.sh` on the server once to enable it.
    - **Landing:** read-only dashboard and scheduler toggle; **Login** (admin) unlocks the full menu.
    - **Setup:** backend status, **Install / fix dependencies**, **Users** (configurable auth: add/update users, passwords stored hashed), **Recent SLA alerts**, timezone/NTP, purge old data (retention).
-   - **Dashboard:** date picker, per-site and trend graphs (download/upload/latency, iperf). **Run test now** (admin), CSV export, **Download summary (30d)**.
+   - **Dashboard:** date picker, **Range** (Full day / Last 12 hours / Last 6 hours), per-site and trend graphs (download/upload/latency, iperf). When viewing **today**, graphs extend to current time (line holds last speed to now). **Drag to pan, scroll to zoom** on day charts; **Reset zoom** to restore. **Run test now** (admin), CSV export, **Download summary (30d)**.
    - **Scheduler:** start or stop the test cron.
    - **Settings:** site URL, SSL, speed limit, cron, Ookla/iperf servers, **probe identity**, **SLA thresholds & webhook**, **data retention**, **Appearance** (light/dark/system theme).
    - **Remote nodes:** Add remote probes (POPs, customer sites) that report back to this server. For each node: **Download script** (bash agent with URL + token), run on the remote machine (e.g. via cron); results appear under that node. Each node has its own **dashboard page** (graphs filtered by node).

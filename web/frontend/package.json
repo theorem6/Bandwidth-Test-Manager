@@ -15,8 +15,9 @@
     "vite": "^5.2.0"
   },
   "dependencies": {
-    "chart.js": "^4.4.1",
     "bootstrap": "^5.3.2",
-    "bootstrap-icons": "^1.11.1"
+    "bootstrap-icons": "^1.11.1",
+    "chart.js": "^4.4.1",
+    "chartjs-plugin-zoom": "^2.2.0"
   }
 }
