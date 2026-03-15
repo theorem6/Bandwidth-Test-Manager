@@ -268,6 +268,7 @@
 <div class="card">
   <div class="card-header">Configuration</div>
   <div class="card-body">
+    <form on:submit|preventDefault={save} aria-label="Configuration form">
     <p class="text-muted small mb-4">All settings are configured from this page. Use <strong>Setup</strong> to install Ookla and iperf3 on the server, then configure servers and tests here.</p>
 
     <div class="mb-3">
@@ -462,11 +463,12 @@
     </div>
 
     <div class="d-flex flex-wrap align-items-center gap-2">
-      <button type="button" class="btn btn-primary" on:click={save}>
+      <button type="submit" class="btn btn-primary">
         <i class="bi bi-check-lg me-1"></i> Save configuration
       </button>
       <span class="small" class:text-success={messageType === 'success'} class:text-danger={messageType === 'danger'}>{message}</span>
     </div>
+    </form>
   </div>
 </div>
 

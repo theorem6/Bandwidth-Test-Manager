@@ -61,11 +61,15 @@ cd "$REMOTE_DIR" && sudo DEBIAN_FRONTEND=noninteractive PORT="$PORT" bash instal
 if [ -f "$REMOTE_DIR/finish-web-install.sh" ] && [ -f /opt/netperf-web/main.py ]; then
   sudo PORT="$PORT" bash "$REMOTE_DIR/finish-web-install.sh"
 fi
-if [ "$PORT" = "8081" ] && command -v nginx &>/dev/null; then
+# Always sync Nginx to the port netperf-web is using (avoids 502 when app is on 8080 but Nginx was left on 8081 or vice versa)
+if command -v nginx &>/dev/null; then
   for f in /etc/nginx/sites-enabled/netperf-web /etc/nginx/sites-available/netperf-web /etc/nginx/snippets/netperf-proxy.conf /etc/nginx/snippets/netperf-path.conf; do
-    [ -f "$f" ] && sudo sed -i "s/127.0.0.1:8080/127.0.0.1:8081/g" "$f"
+    if [ -f "$f" ]; then
+      sudo sed -i "s/127\.0\.0\.1:8080/127.0.0.1:$PORT/g" "$f"
+      sudo sed -i "s/127\.0\.0\.1:8081/127.0.0.1:$PORT/g" "$f"
+    fi
   done
-  sudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null && echo "Nginx updated to proxy to port 8081."
+  sudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null && echo "Nginx synced to port $PORT."
 fi
 rm -rf "$REMOTE_DIR" /tmp/deploy.tar.gz
 echo ""

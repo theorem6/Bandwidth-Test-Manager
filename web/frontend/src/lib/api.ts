@@ -160,8 +160,10 @@ export async function getStatus(): Promise<{ scheduled: boolean }> {
   return fetchApi<{ scheduled: boolean }>('/api/status');
 }
 
-export async function getData(date: string): Promise<DataResponse> {
-  return fetchApi(`/api/data?date=${encodeURIComponent(date)}`, { cache: 'no-store' });
+export async function getData(date: string, probeId?: string): Promise<DataResponse> {
+  let url = `/api/data?date=${encodeURIComponent(date)}`;
+  if (probeId?.trim()) url += `&probe_id=${encodeURIComponent(probeId.trim())}`;
+  return fetchApi(url, { cache: 'no-store' });
 }
 
 export interface SpeedtestPoint {
@@ -202,8 +204,11 @@ export interface HistoryResponse {
   iperf: HistoryIperfPoint[];
 }
 
-export async function getHistory(days?: number): Promise<HistoryResponse> {
-  const q = days != null ? `?days=${days}` : '';
+export async function getHistory(days?: number, probeId?: string): Promise<HistoryResponse> {
+  const params = new URLSearchParams();
+  if (days != null) params.set('days', String(days));
+  if (probeId?.trim()) params.set('probe_id', probeId.trim());
+  const q = params.toString() ? `?${params.toString()}` : '';
   return fetchApi<HistoryResponse>(`/api/history${q}`);
 }
 
@@ -367,4 +372,57 @@ export interface SpeedtestServerOption {
 
 export async function getSpeedtestServers(): Promise<{ servers: SpeedtestServerOption[]; error?: string }> {
   return fetchApi<{ servers: SpeedtestServerOption[]; error?: string }>('/api/speedtest-servers');
+}
+
+// --- Remote nodes (probes that report back to this server) ---
+
+export interface RemoteNode {
+  node_id: string;
+  name: string;
+  location: string;
+  created_at: string;
+  last_seen_at: string;
+}
+
+export async function getRemoteNodes(): Promise<{ nodes: RemoteNode[] }> {
+  return fetchApi<{ nodes: RemoteNode[] }>('/api/remote/nodes');
+}
+
+export async function createRemoteNode(name: string, location: string): Promise<{
+  ok: boolean;
+  node?: RemoteNode & { token: string };
+  error?: string;
+  message?: string;
+}> {
+  return fetchApi('/api/remote/nodes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim(), location: location.trim() }),
+  });
+}
+
+export async function getRemoteNode(nodeId: string): Promise<RemoteNode | null> {
+  try {
+    return await fetchApi<RemoteNode>(`/api/remote/nodes/${encodeURIComponent(nodeId)}`);
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteRemoteNode(nodeId: string): Promise<{ ok: boolean; error?: string }> {
+  return fetchApi(`/api/remote/nodes/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+}
+
+/** Download the remote agent script (uses auth). Returns script text; caller can trigger save. */
+export async function getRemoteScript(nodeId: string): Promise<string> {
+  const base = getBase();
+  const r = await fetch(`${base}/api/remote/script/${encodeURIComponent(nodeId)}`, {
+    headers: authHeaders(),
+  });
+  if (r.status === 401) {
+    auth.logout();
+    throw new Error('Login required');
+  }
+  if (!r.ok) throw new Error('Failed to download script');
+  return r.text();
 }

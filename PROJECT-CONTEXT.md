@@ -7,8 +7,8 @@
 - **Core tools:** Ookla Speedtest CLI (command line) and **iperf3** (client only).
 - Optional: **mtr**, **jq** (required for reporter).
 - **Configurable sites:** Ookla servers and iperf3 servers/tests are defined in `/etc/netperf/config.json` and can be edited in the web UI. Cron schedule is also in config.
-- **Web interface:** Optional web app (FastAPI + Uvicorn on port 8080) with **Setup** (install/fix dependencies, **Users** for configurable auth, **Recent SLA alerts**, timezone/NTP, purge), **Dashboard** (graphs, CSV/summary export), **Scheduler**, and **Settings** (config, probe identity, SLA thresholds & webhook, retention). UI is responsive. HTTPS via nginx. Public read-only landing; admin login for full access.
-- **Data:** Results stored in **SQLite** (`/var/log/netperf/netperf.db`); log files under `/var/log/netperf/YYYYMMDD/` are imported on read. Optional **probe_id** for multi-site; **retention_days** and purge from Setup.
+- **Web interface:** Optional web app (FastAPI + Uvicorn on port 8080) with **Setup** (install/fix dependencies, **Users** for configurable auth, **Recent SLA alerts**, timezone/NTP, purge), **Dashboard** (graphs, CSV/summary export), **Scheduler**, **Settings** (config, probe identity, SLA thresholds & webhook, retention, **Appearance** light/dark/system), and **Remote nodes** (add probes that report back; download agent script per node; per-node dashboard). UI is responsive. HTTPS via nginx. Public read-only landing; admin login for full access.
+- **Data:** Results stored in **SQLite** (`/var/log/netperf/netperf.db`); log files under `/var/log/netperf/YYYYMMDD/` are imported on read. Optional **probe_id** for multi-site; **retention_days** and purge from Setup. **Remote nodes** table stores node_id, name, location, token; ingest API accepts POST with **X-Node-Token** and writes results with that node’s probe_id.
 
 ---
 
@@ -126,6 +126,15 @@ echo -e "alias crontab='EDITOR=nano crontab'" >> .bash_aliases && . .bash_aliase
 
 ---
 
+## Remote nodes (multi-probe reporting)
+
+- **Purpose:** Deploy a small agent on remote machines (POPs, customer sites) so they run speedtest/iperf and report results back to this main server. Each remote is a **node** with its own dashboard.
+- **Flow:** In the UI, **Remote nodes** → Add node (name, location). The server creates the node and shows a **token** (once) and a **Download script** button. The script is a bash file with `MAIN_URL` and `NODE_TOKEN` already set. On the remote machine: install `speedtest` (Ookla CLI) and optionally `iperf3`, make the script executable, run it (e.g. via cron). The script POSTs JSON to `MAIN_URL/api/remote/ingest` with header `X-Node-Token: NODE_TOKEN`; the server stores results with `probe_id` = that node’s ID and updates `last_seen_at`.
+- **API:** `POST /api/remote/ingest` (no user auth; uses `X-Node-Token`). Body: `{ "log_date": "YYYYMMDD", "speedtest": [ { "site", "timestamp", "download_bps", "upload_bps", "latency_ms" } ], "iperf": [ { "site", "timestamp", "bits_per_sec" } ] }`. Admin-only: `GET/POST /api/remote/nodes`, `GET/DELETE /api/remote/nodes/{node_id}`, `GET /api/remote/script/{node_id}` (download script with URL and token injected).
+- **DB:** Table `remote_nodes` (node_id, name, location, token, created_at, last_seen_at). Results tables already have `probe_id`; remote ingest sets it to the node’s `node_id`.
+
+---
+
 ## Quick reference
 
 - **Start testing session:** `sudo netperf-scheduler start`
@@ -138,7 +147,7 @@ echo -e "alias crontab='EDITOR=nano crontab'" >> .bash_aliases && . .bash_aliase
 
 - **URL:** Use the **Site URL (HTTPS)** configured in Settings (e.g. `https://hss.wisptools.io/netperf/`). No port in the URL; nginx serves over HTTPS on 443. After `install.sh`, run `sudo ./web/setup-https.sh` so the server uses the cert; then open that URL.
 - **Auth:** Built-in users `bwadmin` (admin) and `user` (readonly) until **Setup → Users** is used to set a password; then config `auth_users` (hashed) is used. Landing page is read-only with scheduler toggle; **Login** gives admin menu.
-- **Features:** **Dashboard** — date selector, separate graphs (download/upload/latency, iperf), trend over time, Run test now, CSV and summary export. **Setup** — backend status, install deps, **Users** (configurable auth), **Recent SLA alerts**, timezone/NTP, purge old data. **Scheduler** — start/stop cron. **Settings** — site URL, SSL, speed limit, cron, Ookla/iperf, probe identity, SLA thresholds & webhook, retention (writes `/etc/netperf/config.json`).
+- **Features:** **Dashboard** — date selector, separate graphs (download/upload/latency, iperf), trend over time, Run test now, CSV and summary export. **Remote nodes** — add nodes (name, location); each gets a unique token and a **downloadable bash script** to run on the remote machine; script runs speedtest (and optional iperf3), POSTs results to this server; each node has its own dashboard page (data filtered by probe_id). **Setup** — backend status, install deps, **Users** (configurable auth), **Recent SLA alerts**, timezone/NTP, purge old data. **Scheduler** — start/stop cron. **Settings** — site URL, SSL, speed limit, cron, Ookla/iperf, probe identity, SLA thresholds & webhook, retention, **Appearance** (light/dark/system) (writes `/etc/netperf/config.json`).
 - **Service:** `systemctl start|stop|status netperf-web` (Uvicorn on 127.0.0.1:8080 or 8081; nginx proxies to it).
 
 ---

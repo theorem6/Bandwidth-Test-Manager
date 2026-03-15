@@ -4,13 +4,16 @@
   import Scheduler from './Scheduler.svelte';
   import Settings from './Settings.svelte';
   import Setup from './Setup.svelte';
+  import RemoteNodes from './RemoteNodes.svelte';
   import { getStatus, schedulerStart, schedulerStop, loginWithCredentials } from './lib/api';
   import { auth } from './lib/auth';
   import { loading } from './lib/stores';
   import { initTheme } from './lib/theme';
 
-  type View = 'dashboard' | 'scheduler' | 'settings' | 'setup';
+  type View = 'dashboard' | 'scheduler' | 'settings' | 'setup' | 'nodes' | 'node';
   let currentView: View = 'dashboard';
+  let selectedNodeId: string | null = null;
+  let selectedNodeName = '';
   let scheduled = false;
   let toastMessage = '';
   let toastType: 'success' | 'error' = 'success';
@@ -24,6 +27,12 @@
   let scheduleBusy = false;
   $: loadingVal = $loading;
   $: user = $auth;
+
+  function openNodeDashboard(id: string, name: string) {
+    selectedNodeId = id;
+    selectedNodeName = name;
+    currentView = 'node';
+  }
 
   function setToast(msg: string, type: 'success' | 'error' = 'success') {
     toastMessage = msg;
@@ -146,15 +155,25 @@
           <a href="/netperf/" class="nav-link" class:active={currentView === 'setup'} on:click|preventDefault={() => { currentView = 'setup'; sidebarOpen = false; }}>
             <i class="bi bi-tools"></i> Setup
           </a>
+          <a href="/netperf/" class="nav-link" class:active={currentView === 'nodes' || currentView === 'node'} on:click|preventDefault={() => { currentView = 'nodes'; selectedNodeId = null; sidebarOpen = false; }}>
+            <i class="bi bi-hdd-network"></i> Remote nodes
+          </a>
         </nav>
       </aside>
 
       <main class="content">
         <h1 class="h4 mb-3 mb-md-4 page-title">
-          {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : 'Setup'}
+          {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : currentView === 'setup' ? 'Setup' : currentView === 'nodes' ? 'Remote nodes' : currentView === 'node' ? selectedNodeName || 'Node' : 'Dashboard'}
         </h1>
         {#if currentView === 'dashboard'}
           <Dashboard onToast={setToast} showAdminActions={true} />
+        {:else if currentView === 'node' && selectedNodeId}
+          <div class="mb-3">
+            <button type="button" class="btn btn-outline-secondary btn-sm" on:click={() => { currentView = 'nodes'; selectedNodeId = null; }}><i class="bi bi-arrow-left me-1"></i> Back to Remote nodes</button>
+          </div>
+          <Dashboard onToast={setToast} showAdminActions={false} probeId={selectedNodeId} />
+        {:else if currentView === 'nodes'}
+          <RemoteNodes onToast={setToast} onOpenNode={openNodeDashboard} />
         {:else if currentView === 'scheduler'}
           <Scheduler {loadStatus} onToast={setToast} />
         {:else if currentView === 'settings'}

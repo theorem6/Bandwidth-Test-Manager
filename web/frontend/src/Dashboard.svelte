@@ -9,6 +9,8 @@
   export let onToast: (msg: string, type?: 'success' | 'error') => void = () => {};
   /** When false (landing page), hide Run test now and Download CSV. */
   export let showAdminActions = true;
+  /** When set, show data for this remote node (probe_id) only. */
+  export let probeId: string | undefined = undefined;
 
   let dates: string[] = [];
   let selectedDate = '';
@@ -318,7 +320,7 @@
   async function loadHistory() {
     historyLoading = true;
     try {
-      historyData = await getHistory(historyDays);
+      historyData = await getHistory(historyDays, probeId);
       await tick();
       // Double rAF so trend canvas elements are in DOM and laid out
       await new Promise<void>((resolve) => {
@@ -407,7 +409,7 @@
     }
     loading.set(true);
     try {
-      const r: DataResponse = await getData(selectedDate);
+      const r: DataResponse = await getData(selectedDate, probeId);
       speedtestData = r.speedtest || {};
       iperfData = r.iperf || {};
       // Force chart redraw with new data (speedtest/iperf day-view graphs)
@@ -522,7 +524,9 @@
     }, 0);
   }
 
-  $: if (selectedDate) loadData();
+  $: selectedDate, probeId;
+  $: if (selectedDate) void loadData();
+  $: if (typeof probeId !== 'undefined') void loadHistory();
   else { speedtestData = {}; iperfData = {}; }
 
   onMount(() => {

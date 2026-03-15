@@ -28,7 +28,8 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
    - **Setup:** backend status, **Install / fix dependencies**, **Users** (configurable auth: add/update users, passwords stored hashed), **Recent SLA alerts**, timezone/NTP, purge old data (retention).
    - **Dashboard:** date picker, per-site and trend graphs (download/upload/latency, iperf). **Run test now** (admin), CSV export, **Download summary (30d)**.
    - **Scheduler:** start or stop the test cron.
-   - **Settings:** site URL, SSL, speed limit, cron, Ookla/iperf servers, **probe identity**, **SLA thresholds & webhook**, **data retention**.
+   - **Settings:** site URL, SSL, speed limit, cron, Ookla/iperf servers, **probe identity**, **SLA thresholds & webhook**, **data retention**, **Appearance** (light/dark/system theme).
+   - **Remote nodes:** Add remote probes (POPs, customer sites) that report back to this server. For each node: **Download script** (bash agent with URL + token), run on the remote machine (e.g. via cron); results appear under that node. Each node has its own **dashboard page** (graphs filtered by node).
 
 5. **Generate speedtest report** (CLI, after some runs)
    ```bash
@@ -78,7 +79,7 @@ Example: `./deploy-gce.sh acs-hss-server us-central1-a`
   Existing config is kept; the web app and static files are updated and the service is restarted.
 
 - Builds the Svelte frontend, streams the project to the instance, runs `install.sh` and finishes the web setup.
-- If port 8080 is in use on the server, the web UI is installed on **8081**; configure nginx to proxy to that port if needed.
+- If port 8080 is in use on the server, the web UI is installed on **8081**; the deploy script syncs nginx to the correct port automatically. To fix 502 after a port change, run on the server: `sudo bash scripts/sync-nginx-netperf-port.sh`.
 - Existing `/etc/netperf/config.json` on the server is kept.
 - Requires: `gcloud` CLI and a Debian/Ubuntu instance.
 

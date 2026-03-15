@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import urllib.request
@@ -825,6 +826,201 @@ async def api_config_set(request: Request, _user: tuple[str, str] = Depends(requ
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+# --- Remote nodes (probes that report back to this server) ---
+
+def _slug(s: str) -> str:
+    """Make a safe node_id from name."""
+    s = re.sub(r"[^a-zA-Z0-9_-]", "-", (s or "").strip())
+    return s.strip("-").lower() or "node"
+
+
+@app.get("/api/remote/nodes")
+def api_remote_list(_user: tuple[str, str] = Depends(require_admin)):
+    """List all remote nodes (no tokens)."""
+    try:
+        nodes = db.list_remote_nodes(STORAGE)
+        return JSONResponse({"nodes": nodes})
+    except Exception:
+        return JSONResponse({"nodes": []})
+
+
+@app.post("/api/remote/nodes")
+async def api_remote_create(request: Request, _user: tuple[str, str] = Depends(require_admin)):
+    """Create a remote node. Body: { name, location? }. Returns node_id and token (show once)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"ok": False, "error": "name required"}, status_code=400)
+    location = (data.get("location") or "").strip()
+    node_id = _slug(name)
+    # Ensure unique node_id
+    existing = db.get_remote_node(STORAGE, node_id)
+    if existing:
+        for i in range(1, 1000):
+            candidate = f"{node_id}-{i}"
+            if not db.get_remote_node(STORAGE, candidate):
+                node_id = candidate
+                break
+    token = secrets.token_hex(24)
+    db.create_remote_node(STORAGE, node_id, name, location, token)
+    node = db.get_remote_node(STORAGE, node_id)
+    return JSONResponse({
+        "ok": True,
+        "node": {**node, "token": token},
+        "message": "Node created. Download the script and run it on the remote machine. Save the token; it is shown only once.",
+    })
+
+
+@app.get("/api/remote/nodes/{node_id}")
+def api_remote_get(node_id: str, _user: tuple[str, str] = Depends(require_admin)):
+    """Get one remote node (no token)."""
+    node = db.get_remote_node(STORAGE, node_id)
+    if not node:
+        return JSONResponse({"error": "Node not found"}, status_code=404)
+    return JSONResponse(node)
+
+
+@app.delete("/api/remote/nodes/{node_id}")
+def api_remote_delete(node_id: str, _user: tuple[str, str] = Depends(require_admin)):
+    """Delete a remote node. Result data for this probe_id is kept."""
+    node = db.get_remote_node(STORAGE, node_id)
+    if not node:
+        return JSONResponse({"error": "Node not found"}, status_code=404)
+    db.delete_remote_node(STORAGE, node_id)
+    return JSONResponse({"ok": True})
+
+
+REMOTE_AGENT_SCRIPT = r'''#!/bin/bash
+# Bandwidth Test Manager - Remote node agent
+# Run this script on a remote machine (e.g. via cron) to report speedtest/iperf results to the main node.
+# Requires: curl, speedtest (Ookla CLI), optional iperf3. Install: apt install curl; see https://www.speedtest.net/apps/cli for Ookla.
+
+set -e
+MAIN_URL="{{MAIN_URL}}"
+NODE_TOKEN="{{NODE_TOKEN}}"
+LOG_DATE=$(date -u +%Y%m%d)
+
+# Optional: one iperf3 server to test (hostname or IP). Leave empty to skip iperf.
+IPERF_HOST="${IPERF_HOST:-}"
+
+payload_speedtest() {
+  local out
+  out=$(speedtest -f json 2>/dev/null) || return 0
+  local down_b=$(echo "$out" | grep -o '"download":{[^}]*"bandwidth":[0-9]*' | grep -o '[0-9]*$' | head -1)
+  local up_b=$(echo "$out" | grep -o '"upload":{[^}]*"bandwidth":[0-9]*' | grep -o '[0-9]*$' | head -1)
+  local lat=$(echo "$out" | grep -o '"latency":[0-9.]*' | head -1 | grep -o '[0-9.]*$')
+  local ts=$(echo "$out" | grep -o '"timestamp":"[^"]*"' | head -1 | sed 's/"timestamp":"//;s/"$//')
+  [ -z "$down_b" ] && down_b=0
+  [ -z "$up_b" ] && up_b=0
+  local down=$((down_b * 8))
+  local up=$((up_b * 8))
+  [ -z "$lat" ] && lat=0
+  [ -z "$ts" ] && ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  echo "{\"site\":\"Remote\",\"timestamp\":\"$ts\",\"download_bps\":$down,\"upload_bps\":$up,\"latency_ms\":$lat}"
+}
+
+payload_iperf() {
+  local host="$1"
+  [ -z "$host" ] && return 0
+  local out
+  out=$(iperf3 -c "$host" -t 10 -f m -J 2>/dev/null) || return 0
+  local bps=$(echo "$out" | grep -o '"bits_per_second":[0-9.]*' | head -1 | grep -o '[0-9.]*$')
+  [ -z "$bps" ] && return 0
+  local ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  echo "{\"site\":\"$host\",\"timestamp\":\"$ts\",\"bits_per_sec\":$bps}"
+}
+
+# Build JSON payload
+SPEEDTEST_JSON=$(payload_speedtest)
+IPERF_JSON=""
+[ -n "$IPERF_HOST" ] && IPERF_JSON=$(payload_iperf "$IPERF_HOST") || true
+
+# Build body: log_date, speedtest array, iperf array
+if [ -n "$IPERF_JSON" ]; then
+  BODY=$(printf '{"log_date":"%s","speedtest":[%s],"iperf":[%s]}' "$LOG_DATE" "$SPEEDTEST_JSON" "$IPERF_JSON")
+else
+  BODY=$(printf '{"log_date":"%s","speedtest":[%s],"iperf":[]}' "$LOG_DATE" "$SPEEDTEST_JSON")
+fi
+
+curl -s -X POST "${MAIN_URL}/api/remote/ingest" \
+  -H "Content-Type: application/json" \
+  -H "X-Node-Token: $NODE_TOKEN" \
+  -d "$BODY" \
+  --max-time 60
+echo ""
+'''
+
+
+@app.get("/api/remote/script/{node_id}")
+def api_remote_script(node_id: str, request: Request, _user: tuple[str, str] = Depends(require_admin)):
+    """Download a bash script for the remote node. Injects MAIN_URL and token."""
+    node = db.get_remote_node(STORAGE, node_id)
+    if not node:
+        return JSONResponse({"error": "Node not found"}, status_code=404)
+    token = db.get_remote_node_token(STORAGE, node_id)
+    if not token:
+        return JSONResponse({"error": "Node not found"}, status_code=404)
+    cfg = get_config()
+    main_url = (cfg.get("site_url") or "").strip().rstrip("/")
+    if not main_url and hasattr(request, "base_url"):
+        main_url = str(request.base_url).rstrip("/")
+    if not main_url:
+        main_url = "https://your-main-node.example.com"
+    script = REMOTE_AGENT_SCRIPT.replace("{{MAIN_URL}}", main_url).replace("{{NODE_TOKEN}}", token)
+    return Response(
+        content=script,
+        media_type="application/x-sh",
+        headers={"Content-Disposition": f'attachment; filename="bwm-remote-agent-{node_id}.sh"'},
+    )
+
+
+@app.post("/api/remote/ingest")
+async def api_remote_ingest(request: Request):
+    """Accept speedtest/iperf results from a remote agent. Auth: X-Node-Token header. No user auth."""
+    token = request.headers.get("X-Node-Token") or ""
+    node = db.get_remote_node_by_token(STORAGE, token) if token else None
+    if not node:
+        return JSONResponse({"ok": False, "error": "Invalid or missing X-Node-Token"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+    log_date = (data.get("log_date") or "").strip()
+    if not log_date or not re.match(r"^\d{8}$", log_date):
+        return JSONResponse({"ok": False, "error": "log_date required (YYYYMMDD)"}, status_code=400)
+    probe_id = node["node_id"]
+    for st in data.get("speedtest") or []:
+        if isinstance(st, dict):
+            try:
+                db.insert_speedtest(
+                    STORAGE,
+                    log_date=log_date,
+                    site=str(st.get("site") or "Remote").strip() or "Remote",
+                    timestamp=str(st.get("timestamp") or ""),
+                    download_bps=int(st["download_bps"]) if st.get("download_bps") is not None else None,
+                    upload_bps=int(st["upload_bps"]) if st.get("upload_bps") is not None else None,
+                    latency_ms=float(st["latency_ms"]) if st.get("latency_ms") is not None else None,
+                    probe_id=probe_id,
+                )
+            except (TypeError, ValueError, KeyError):
+                pass
+    for ip in data.get("iperf") or []:
+        if isinstance(ip, dict) and ip.get("bits_per_sec") is not None:
+            db.insert_iperf(
+                STORAGE,
+                log_date=log_date,
+                site=str(ip.get("site") or "iperf").strip() or "iperf",
+                timestamp=str(ip.get("timestamp") or ""),
+                bits_per_sec=float(ip["bits_per_sec"]),
+                probe_id=probe_id,
+            )
+    db.update_remote_node_last_seen(STORAGE, probe_id)
+    return JSONResponse({"ok": True, "message": "Ingested"})
+
+
 @app.get("/api/dates")
 def api_dates():
     """Return list of dates that have data (DB + filesystem). Imports file data into DB for each date dir."""
@@ -915,8 +1111,8 @@ def api_export_csv(date: Optional[str] = None, _user: tuple[str, str] = Depends(
 
 
 @app.get("/api/history")
-def api_history(days: int = 90):
-    """Return time-series data for trend graphs. Reads from SQLite; imports file data for dates in range first."""
+def api_history(days: int = 90, probe_id: Optional[str] = None):
+    """Return time-series data for trend graphs. Optional probe_id filter for remote node view."""
     try:
         db.init_db(STORAGE)
         cutoff = (datetime.utcnow() - timedelta(days=min(days, 365))).strftime("%Y%m%d")
@@ -924,8 +1120,9 @@ def api_history(days: int = 90):
             for d in STORAGE.iterdir():
                 if d.is_dir() and d.name.isdigit() and d.name >= cutoff:
                     _import_day_from_files(d.name)
-        speedtest_points = db.get_history_speedtest(STORAGE, cutoff)
-        iperf_points = db.get_history_iperf(STORAGE, cutoff)
+        pid = (probe_id or "").strip() or None
+        speedtest_points = db.get_history_speedtest(STORAGE, cutoff, probe_id=pid)
+        iperf_points = db.get_history_iperf(STORAGE, cutoff, probe_id=pid)
         return JSONResponse({"speedtest": speedtest_points, "iperf": iperf_points})
     except Exception:
         return JSONResponse({"speedtest": [], "iperf": []})

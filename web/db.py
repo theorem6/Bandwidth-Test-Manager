@@ -60,6 +60,18 @@ def init_db(storage: Path) -> None:
                 webhook_fired INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS idx_alert_created ON alert_history(created_at);
+
+            CREATE TABLE IF NOT EXISTS remote_nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                location TEXT DEFAULT '',
+                token TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                last_seen_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_remote_nodes_node_id ON remote_nodes(node_id);
+            CREATE INDEX IF NOT EXISTS idx_remote_nodes_token ON remote_nodes(token);
         """)
         conn.commit()
         # Migrate existing DBs: add probe_id if missing
@@ -281,19 +293,32 @@ def get_dates(storage: Path) -> list[str]:
     return sorted(dates, reverse=True)
 
 
-def get_history_speedtest(storage: Path, cutoff_ymd: str) -> list[dict[str, Any]]:
-    """Return all speedtest points with log_date >= cutoff_ymd (YYYYMMDD) for trend charts."""
+def get_history_speedtest(
+    storage: Path, cutoff_ymd: str, probe_id: Optional[str] = None
+) -> list[dict[str, Any]]:
+    """Return all speedtest points with log_date >= cutoff_ymd (YYYYMMDD) for trend charts. Optional probe_id filter."""
     conn = _get_conn(storage)
     try:
-        rows = conn.execute(
-            """
-            SELECT log_date, site, timestamp, download_bps, upload_bps, latency_ms
-            FROM speedtest_results
-            WHERE log_date >= ?
-            ORDER BY log_date, timestamp
-            """,
-            (cutoff_ymd,),
-        ).fetchall()
+        if probe_id and probe_id.strip():
+            rows = conn.execute(
+                """
+                SELECT log_date, site, timestamp, download_bps, upload_bps, latency_ms
+                FROM speedtest_results
+                WHERE log_date >= ? AND (probe_id = ? OR probe_id = '' OR probe_id IS NULL)
+                ORDER BY log_date, timestamp
+                """,
+                (cutoff_ymd, probe_id.strip()),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT log_date, site, timestamp, download_bps, upload_bps, latency_ms
+                FROM speedtest_results
+                WHERE log_date >= ?
+                ORDER BY log_date, timestamp
+                """,
+                (cutoff_ymd,),
+            ).fetchall()
     finally:
         conn.close()
     return [
@@ -404,19 +429,32 @@ def get_alerts(storage: Path, limit: int = 50) -> list[dict[str, Any]]:
     return out
 
 
-def get_history_iperf(storage: Path, cutoff_ymd: str) -> list[dict[str, Any]]:
-    """Return all iperf points with log_date >= cutoff_ymd (YYYYMMDD) for trend charts."""
+def get_history_iperf(
+    storage: Path, cutoff_ymd: str, probe_id: Optional[str] = None
+) -> list[dict[str, Any]]:
+    """Return all iperf points with log_date >= cutoff_ymd (YYYYMMDD) for trend charts. Optional probe_id filter."""
     conn = _get_conn(storage)
     try:
-        rows = conn.execute(
-            """
-            SELECT log_date, site, timestamp, bits_per_sec
-            FROM iperf_results
-            WHERE log_date >= ?
-            ORDER BY log_date, timestamp
-            """,
-            (cutoff_ymd,),
-        ).fetchall()
+        if probe_id and probe_id.strip():
+            rows = conn.execute(
+                """
+                SELECT log_date, site, timestamp, bits_per_sec
+                FROM iperf_results
+                WHERE log_date >= ? AND (probe_id = ? OR probe_id = '' OR probe_id IS NULL)
+                ORDER BY log_date, timestamp
+                """,
+                (cutoff_ymd, probe_id.strip()),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT log_date, site, timestamp, bits_per_sec
+                FROM iperf_results
+                WHERE log_date >= ?
+                ORDER BY log_date, timestamp
+                """,
+                (cutoff_ymd,),
+            ).fetchall()
     finally:
         conn.close()
     return [
@@ -466,3 +504,113 @@ def import_iperf_file_into_db(
                 bits_per_sec=float(bps),
                 probe_id=probe_id,
             )
+
+
+# --- Remote nodes (probes that report back to this main node) ---
+
+def list_remote_nodes(storage: Path) -> list[dict[str, Any]]:
+    """Return all remote nodes (node_id, name, location, created_at, last_seen_at). Token not returned."""
+    conn = _get_conn(storage)
+    try:
+        rows = conn.execute(
+            "SELECT node_id, name, location, created_at, last_seen_at FROM remote_nodes ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "node_id": r[0],
+            "name": r[1],
+            "location": r[2] or "",
+            "created_at": r[3] or "",
+            "last_seen_at": r[4] or "",
+        }
+        for r in rows
+    ]
+
+
+def create_remote_node(
+    storage: Path, node_id: str, name: str, location: str, token: str
+) -> None:
+    """Insert a new remote node. node_id must be unique slug."""
+    conn = _get_conn(storage)
+    try:
+        conn.execute(
+            """
+            INSERT INTO remote_nodes (node_id, name, location, token)
+            VALUES (?, ?, ?, ?)
+            """,
+            (node_id.strip(), (name or "").strip() or node_id, (location or "").strip(), token),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_remote_node_token(storage: Path, node_id: str) -> Optional[str]:
+    """Return token for node_id (for script download only)."""
+    conn = _get_conn(storage)
+    try:
+        row = conn.execute("SELECT token FROM remote_nodes WHERE node_id = ?", (node_id.strip(),)).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def get_remote_node(storage: Path, node_id: str) -> Optional[dict[str, Any]]:
+    """Return one node by node_id (without token)."""
+    conn = _get_conn(storage)
+    try:
+        row = conn.execute(
+            "SELECT node_id, name, location, created_at, last_seen_at FROM remote_nodes WHERE node_id = ?",
+            (node_id.strip(),),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {
+        "node_id": row[0],
+        "name": row[1],
+        "location": row[2] or "",
+        "created_at": row[3] or "",
+        "last_seen_at": row[4] or "",
+    }
+
+
+def get_remote_node_by_token(storage: Path, token: str) -> Optional[dict[str, Any]]:
+    """Return node (node_id, name, ...) for ingest API auth. Token must match."""
+    conn = _get_conn(storage)
+    try:
+        row = conn.execute(
+            "SELECT node_id, name, location FROM remote_nodes WHERE token = ?",
+            (token.strip(),),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {"node_id": row[0], "name": row[1], "location": row[2] or ""}
+
+
+def update_remote_node_last_seen(storage: Path, node_id: str) -> None:
+    """Set last_seen_at to now for the node."""
+    conn = _get_conn(storage)
+    try:
+        conn.execute(
+            "UPDATE remote_nodes SET last_seen_at = datetime('now') WHERE node_id = ?",
+            (node_id.strip(),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_remote_node(storage: Path, node_id: str) -> None:
+    """Remove a remote node. Does not delete its result data (probe_id remains in results)."""
+    conn = _get_conn(storage)
+    try:
+        conn.execute("DELETE FROM remote_nodes WHERE node_id = ?", (node_id.strip(),))
+        conn.commit()
+    finally:
+        conn.close()
