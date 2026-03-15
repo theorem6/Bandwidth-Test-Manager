@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import urllib.request
 import urllib.error
@@ -834,6 +835,26 @@ def _slug(s: str) -> str:
     return s.strip("-").lower() or "node"
 
 
+def _verify_address(address: str) -> tuple[bool, str]:
+    """Verify that the given IP or hostname is reachable (TCP connect to port 22 or 80). Returns (ok, error_message)."""
+    host = (address or "").strip()
+    if not host:
+        return True, ""
+    # Allow host:port; for verification we only need the host part (avoid splitting IPv6)
+    if re.match(r"^[^\[\]]+:\d+$", host):
+        host = host.rsplit(":", 1)[0].strip()
+    if not host:
+        return True, ""
+    for port in (22, 80, 443):
+        try:
+            sock = socket.create_connection((host, port), timeout=3)
+            sock.close()
+            return True, ""
+        except (socket.gaierror, socket.timeout, OSError):
+            continue
+    return False, f"Cannot reach {address} (tried TCP ports 22, 80, 443). Check IP/hostname and that the host is up and reachable from this server."
+
+
 @app.get("/api/remote/nodes")
 def api_remote_list(_user: tuple[str, str] = Depends(require_admin)):
     """List all remote nodes (no tokens)."""
@@ -846,7 +867,7 @@ def api_remote_list(_user: tuple[str, str] = Depends(require_admin)):
 
 @app.post("/api/remote/nodes")
 async def api_remote_create(request: Request, _user: tuple[str, str] = Depends(require_admin)):
-    """Create a remote node. Body: { name, location? }. Returns node_id and token (show once)."""
+    """Create a remote node. Body: { name, location?, address? }. If address (IP/hostname) is provided, verifies reachability. Returns node_id and token (show once)."""
     try:
         data = await request.json()
     except Exception:
@@ -855,6 +876,11 @@ async def api_remote_create(request: Request, _user: tuple[str, str] = Depends(r
     if not name:
         return JSONResponse({"ok": False, "error": "name required"}, status_code=400)
     location = (data.get("location") or "").strip()
+    address = (data.get("address") or "").strip()
+    if address:
+        ok, err = _verify_address(address)
+        if not ok:
+            return JSONResponse({"ok": False, "error": err}, status_code=400)
     node_id = _slug(name)
     # Ensure unique node_id
     existing = db.get_remote_node(STORAGE, node_id)
@@ -865,7 +891,7 @@ async def api_remote_create(request: Request, _user: tuple[str, str] = Depends(r
                 node_id = candidate
                 break
     token = secrets.token_hex(24)
-    db.create_remote_node(STORAGE, node_id, name, location, token)
+    db.create_remote_node(STORAGE, node_id, name, location, token, address=address)
     node = db.get_remote_node(STORAGE, node_id)
     return JSONResponse({
         "ok": True,
@@ -883,6 +909,36 @@ def api_remote_get(node_id: str, _user: tuple[str, str] = Depends(require_admin)
     return JSONResponse(node)
 
 
+@app.put("/api/remote/nodes/{node_id}")
+async def api_remote_update(node_id: str, request: Request, _user: tuple[str, str] = Depends(require_admin)):
+    """Update a remote node. Body: { name?, location?, address? }. Only provided fields are updated. If address (non-empty) provided, verifies reachability."""
+    node = db.get_remote_node(STORAGE, node_id)
+    if not node:
+        return JSONResponse({"error": "Node not found"}, status_code=404)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    name = data.get("name")
+    name = (name.strip() if isinstance(name, str) else None) if name is not None else None
+    location = data.get("location")
+    location = (location.strip() if isinstance(location, str) else "") if location is not None else None
+    address = data.get("address")
+    address = (address.strip() if isinstance(address, str) else "") if address is not None else None
+    if address is not None and address:
+        ok, err = _verify_address(address)
+        if not ok:
+            return JSONResponse({"ok": False, "error": err}, status_code=400)
+    if name is not None:
+        db.update_remote_node(STORAGE, node_id, name=name)
+    if location is not None:
+        db.update_remote_node(STORAGE, node_id, location=location)
+    if address is not None:
+        db.update_remote_node(STORAGE, node_id, address=address)
+    updated = db.get_remote_node(STORAGE, node_id)
+    return JSONResponse({"ok": True, "node": updated})
+
+
 @app.delete("/api/remote/nodes/{node_id}")
 def api_remote_delete(node_id: str, _user: tuple[str, str] = Depends(require_admin)):
     """Delete a remote node. Result data for this probe_id is kept."""
@@ -897,6 +953,11 @@ REMOTE_AGENT_SCRIPT = r'''#!/bin/bash
 # Bandwidth Test Manager - Remote node agent
 # Run this script on a remote machine (e.g. via cron) to report speedtest/iperf results to the main node.
 # Requires: curl, speedtest (Ookla CLI), optional iperf3. Install: apt install curl; see https://www.speedtest.net/apps/cli for Ookla.
+#
+# Run every hour (e.g. at :05): add to crontab -e:
+#   5 * * * * /path/to/bwm-remote-agent-NODEID.sh
+#
+# Or with env in crontab: 5 * * * * BWM_MAIN_URL="..." BWM_NODE_TOKEN="..." /path/to/bwm-remote-agent-standalone.sh
 
 set -e
 MAIN_URL="{{MAIN_URL}}"
@@ -1128,17 +1189,24 @@ def api_history(days: int = 90, probe_id: Optional[str] = None):
         return JSONResponse({"speedtest": [], "iperf": []})
 
 
+def _crontab_l() -> str:
+    """Return root's crontab (where netperf-scheduler writes). Use sudo when app is not root."""
+    cmd = ["crontab", "-l"]
+    if os.geteuid() != 0:
+        cmd = ["sudo", "-n", "crontab", "-l"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return (r.stdout or "") if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 @app.get("/api/status")
 def api_status():
     try:
-        out = subprocess.run(
-            ["crontab", "-l"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        scheduled = "netperf" in (out.stdout or "")
-    except (subprocess.TimeoutExpired, Exception):
+        out = _crontab_l()
+        scheduled = "netperf" in out
+    except Exception:
         scheduled = False
     return JSONResponse({"scheduled": scheduled})
 
@@ -1218,35 +1286,21 @@ def api_backend_status(_user: tuple[str, str] = Depends(get_current_user)):
             return False
 
     scheduled = False
+    cron_line = ""
     try:
-        out = subprocess.run(
-            ["crontab", "-l"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        scheduled = "netperf" in (out.stdout or "")
+        out = _crontab_l()
+        scheduled = "netperf" in out
+        if scheduled:
+            for line in out.splitlines():
+                if "netperf" in line:
+                    cron_line = line.strip()
+                    break
     except Exception:
         pass
 
     cfg = get_config()
     ookla_list = cfg.get("ookla_servers") or []
     iperf_servers_list = cfg.get("iperf_servers") or []
-    cron_line = ""
-    if scheduled:
-        try:
-            out = subprocess.run(
-                ["crontab", "-l"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            for line in (out.stdout or "").splitlines():
-                if "netperf" in line:
-                    cron_line = line.strip()
-                    break
-        except Exception:
-            pass
     return JSONResponse({
         "speedtest_installed": have("speedtest"),
         "iperf3_installed": have("iperf3"),

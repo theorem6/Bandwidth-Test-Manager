@@ -380,6 +380,7 @@ export interface RemoteNode {
   node_id: string;
   name: string;
   location: string;
+  address: string;
   created_at: string;
   last_seen_at: string;
 }
@@ -388,7 +389,7 @@ export async function getRemoteNodes(): Promise<{ nodes: RemoteNode[] }> {
   return fetchApi<{ nodes: RemoteNode[] }>('/api/remote/nodes');
 }
 
-export async function createRemoteNode(name: string, location: string): Promise<{
+export async function createRemoteNode(name: string, location: string, address?: string): Promise<{
   ok: boolean;
   node?: RemoteNode & { token: string };
   error?: string;
@@ -397,7 +398,11 @@ export async function createRemoteNode(name: string, location: string): Promise<
   return fetchApi('/api/remote/nodes', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name.trim(), location: location.trim() }),
+    body: JSON.stringify({
+      name: name.trim(),
+      location: location.trim(),
+      address: (address || '').trim(),
+    }),
   });
 }
 
@@ -407,6 +412,17 @@ export async function getRemoteNode(nodeId: string): Promise<RemoteNode | null> 
   } catch {
     return null;
   }
+}
+
+export async function updateRemoteNode(
+  nodeId: string,
+  data: { name?: string; location?: string; address?: string }
+): Promise<{ ok: boolean; node?: RemoteNode; error?: string }> {
+  return fetchApi(`/api/remote/nodes/${encodeURIComponent(nodeId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
 }
 
 export async function deleteRemoteNode(nodeId: string): Promise<{ ok: boolean; error?: string }> {

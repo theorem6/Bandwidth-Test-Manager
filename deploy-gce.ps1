@@ -71,6 +71,10 @@ if command -v nginx &>/dev/null; then
   done
   sudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null && echo "Nginx synced to port $PORT."
 fi
+# Stop netperf cron by default after deploy; use Scheduler page (or: sudo netperf-scheduler start) to start
+if [ -x /bin/netperf-scheduler ]; then
+  sudo /bin/netperf-scheduler stop 2>/dev/null && echo "Netperf cron stopped (start from Scheduler when ready)." || true
+fi
 rm -rf "$REMOTE_DIR" /tmp/deploy.tar.gz
 echo ""
 echo "=== Deploy complete ==="

@@ -178,9 +178,13 @@
     iperfTests = iperfTests.filter((_, idx) => idx !== i);
   }
 
+  /** Coerce to string before trim (inputs can be number from type="number" or bindings). */
+  function str(v: unknown): string {
+    return typeof v === 'string' ? v : (v != null ? String(v) : '');
+  }
   async function save() {
     message = '';
-    const limitVal = limitMbps.trim();
+    const limitVal = str(limitMbps).trim();
     const limit = limitVal === '' ? null : parseInt(limitVal, 10);
     if (limitVal !== '' && (isNaN(limit!) || limit! < 1)) {
       message = 'Speed limit must be a positive number or empty.';
@@ -189,27 +193,27 @@
     }
     try {
       const duration = Math.max(1, Math.min(300, parseInt(String(iperfDurationSeconds), 10) || 10));
-      const slaMinD = slaMinDownloadMbps.trim() ? parseInt(slaMinDownloadMbps, 10) : null;
-      const slaMinU = slaMinUploadMbps.trim() ? parseInt(slaMinUploadMbps, 10) : null;
-      const slaMaxL = slaMaxLatencyMs.trim() ? parseInt(slaMaxLatencyMs, 10) : null;
+      const slaMinD = str(slaMinDownloadMbps).trim() ? parseInt(String(slaMinDownloadMbps), 10) : null;
+      const slaMinU = str(slaMinUploadMbps).trim() ? parseInt(String(slaMinUploadMbps), 10) : null;
+      const slaMaxL = str(slaMaxLatencyMs).trim() ? parseInt(String(slaMaxLatencyMs), 10) : null;
       const r = await putConfig({
-        site_url: siteUrl.trim(),
-        ssl_cert_path: sslCertPath.trim(),
-        ssl_key_path: sslKeyPath.trim(),
+        site_url: str(siteUrl).trim(),
+        ssl_cert_path: str(sslCertPath).trim(),
+        ssl_key_path: str(sslKeyPath).trim(),
         speedtest_limit_mbps: limit,
-        cron_schedule: cronSchedule.trim() || '5 * * * *',
+        cron_schedule: str(cronSchedule).trim() || '5 * * * *',
         iperf_duration_seconds: duration,
         ookla_servers: formToOokla(ooklaServers),
-        iperf_servers: iperfServers.map((s) => ({ host: s.host.trim() || 'localhost', label: s.label.trim() || 'Server' })),
-        iperf_tests: iperfTests.map((t) => ({ name: (t.name || 'test').trim(), args: (t.args || '').trim() })),
-        probe_id: probeId.trim(),
-        location_name: locationName.trim(),
-        region: region.trim(),
-        tier: tier.trim(),
+        iperf_servers: iperfServers.map((s) => ({ host: str(s.host).trim() || 'localhost', label: str(s.label).trim() || 'Server' })),
+        iperf_tests: iperfTests.map((t) => ({ name: str(t.name || 'test').trim(), args: str(t.args || '').trim() })),
+        probe_id: str(probeId).trim(),
+        location_name: str(locationName).trim(),
+        region: str(region).trim(),
+        tier: str(tier).trim(),
         sla_thresholds: { min_download_mbps: slaMinD, min_upload_mbps: slaMinU, max_latency_ms: slaMaxL },
-        webhook_url: webhookUrl.trim(),
-        webhook_secret: webhookSecret.trim(),
-        retention_days: retentionDays.trim() ? parseInt(retentionDays, 10) || null : null,
+        webhook_url: str(webhookUrl).trim(),
+        webhook_secret: str(webhookSecret).trim(),
+        retention_days: str(retentionDays).trim() ? parseInt(String(retentionDays), 10) || null : null,
       });
       if (r.ok) {
         message = 'Saved.';

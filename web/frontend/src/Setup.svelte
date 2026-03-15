@@ -341,10 +341,14 @@
         <p class="text-muted small mb-3">No custom users yet. Set a password below to create config auth_users.</p>
       {/if}
     {/if}
-    <div class="row g-2 align-items-end mb-2">
+    <form
+      class="row g-2 align-items-end mb-2"
+      aria-label="Set user password"
+      on:submit|preventDefault={runSetPassword}
+    >
       <div class="col-auto">
         <label for="setup-user-username" class="form-label small mb-0">Username</label>
-        <input id="setup-user-username" type="text" class="form-control form-control-sm" style="width:10rem" bind:value={setPasswordUsername} placeholder="e.g. bwadmin" />
+        <input id="setup-user-username" type="text" class="form-control form-control-sm" style="width:10rem" bind:value={setPasswordUsername} placeholder="e.g. bwadmin" autocomplete="username" />
       </div>
       <div class="col-auto">
         <label for="setup-user-password" class="form-label small mb-0">Password</label>
@@ -358,11 +362,11 @@
         </select>
       </div>
       <div class="col-auto">
-        <button type="button" class="btn btn-outline-primary btn-sm" on:click={runSetPassword} disabled={setPasswordLoading}>
+        <button type="submit" class="btn btn-outline-primary btn-sm" disabled={setPasswordLoading}>
           {#if setPasswordLoading}…{:else}Set password{/if}
         </button>
       </div>
-    </div>
+    </form>
     {#if setPasswordMessage}
       <p class="small mb-0 {setPasswordMessage.includes('Failed') ? 'text-danger' : 'text-success'}">{setPasswordMessage}</p>
     {/if}

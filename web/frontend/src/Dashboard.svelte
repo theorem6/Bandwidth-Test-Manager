@@ -274,13 +274,18 @@
   }
   async function updateCharts() {
     await tick();
-    // Double rAF so canvas elements are in DOM and laid out before we draw
+    // One rAF so canvas is in DOM and laid out; then run heavy chart work in idle/timeout to avoid long rAF handler (violation).
     return new Promise<void>((resolve) => {
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
+        const run = () => {
           doRenderCharts();
           resolve();
-        });
+        };
+        if (typeof requestIdleCallback !== 'undefined') {
+          requestIdleCallback(run, { timeout: 150 });
+        } else {
+          setTimeout(run, 0);
+        }
       });
     });
   }

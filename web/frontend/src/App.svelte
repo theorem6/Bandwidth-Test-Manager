@@ -5,6 +5,7 @@
   import Settings from './Settings.svelte';
   import Setup from './Setup.svelte';
   import RemoteNodes from './RemoteNodes.svelte';
+  import NodeView from './NodeView.svelte';
   import { getStatus, schedulerStart, schedulerStop, loginWithCredentials } from './lib/api';
   import { auth } from './lib/auth';
   import { loading } from './lib/stores';
@@ -169,9 +170,9 @@
           <Dashboard onToast={setToast} showAdminActions={true} />
         {:else if currentView === 'node' && selectedNodeId}
           <div class="mb-3">
-            <button type="button" class="btn btn-outline-secondary btn-sm" on:click={() => { currentView = 'nodes'; selectedNodeId = null; }}><i class="bi bi-arrow-left me-1"></i> Back to Remote nodes</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" on:click={() => { currentView = 'nodes'; selectedNodeId = null; selectedNodeName = ''; }}><i class="bi bi-arrow-left me-1"></i> Back to Remote nodes</button>
           </div>
-          <Dashboard onToast={setToast} showAdminActions={false} probeId={selectedNodeId} />
+          <NodeView nodeId={selectedNodeId} onToast={setToast} />
         {:else if currentView === 'nodes'}
           <RemoteNodes onToast={setToast} onOpenNode={openNodeDashboard} />
         {:else if currentView === 'scheduler'}

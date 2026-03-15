@@ -76,17 +76,23 @@ START() {
 	# iperf3: run each server × each test from config (duration from config, default 10s)
 	IPERF_DURATION=$(jq -r '.iperf_duration_seconds // 10' "$CONFIG_FILE")
 	[ -z "$IPERF_DURATION" ] || [ "$IPERF_DURATION" = "null" ] && IPERF_DURATION=10
+	# Sanitize label for filename (alphanumeric, dash, underscore only)
+	sanitize() { echo "$1" | tr -c '[:alnum:]._-' '_' | sed 's/__*/_/g; s/^_//; s/_$//' || echo "unknown"; }
 	server_idx=0
 	while true; do
 		host=$(jq -r --argjson i "$server_idx" '.iperf_servers[$i].host // empty' "$CONFIG_FILE")
 		slabel=$(jq -r --argjson i "$server_idx" '.iperf_servers[$i].label // empty' "$CONFIG_FILE")
 		[ -z "$host" ] && break
+		slabel_safe=$(sanitize "$slabel")
+		[ -z "$slabel_safe" ] && slabel_safe="server$server_idx"
 		test_idx=0
 		while true; do
 			tname=$(jq -r --argjson i "$test_idx" '.iperf_tests[$i].name // empty' "$CONFIG_FILE")
 			targs=$(jq -r --argjson i "$test_idx" '.iperf_tests[$i].args // empty' "$CONFIG_FILE")
 			[ -z "$tname" ] && break
-			outfile="$STORAGE_LOCATION/iperf-${slabel}-${tname}.txt"
+			tname_safe=$(sanitize "$tname")
+			[ -z "$tname_safe" ] && tname_safe="test$test_idx"
+			outfile="$STORAGE_LOCATION/iperf-${slabel_safe}-${tname_safe}.txt"
 			iperf3 --timestamp -c "$host" $targs -t "$IPERF_DURATION" >> "$outfile" 2>/dev/null || true
 			sleep 10
 			test_idx=$((test_idx + 1))

@@ -66,6 +66,7 @@ def init_db(storage: Path) -> None:
                 node_id TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
                 location TEXT DEFAULT '',
+                address TEXT DEFAULT '',
                 token TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now')),
                 last_seen_at TEXT
@@ -79,6 +80,10 @@ def init_db(storage: Path) -> None:
             if not _has_column(conn, table, "probe_id"):
                 conn.execute("ALTER TABLE %s ADD COLUMN probe_id TEXT DEFAULT ''" % table)
                 conn.commit()
+        # Migrate remote_nodes: add address if missing
+        if not _has_column(conn, "remote_nodes", "address"):
+            conn.execute("ALTER TABLE remote_nodes ADD COLUMN address TEXT DEFAULT ''")
+            conn.commit()
     finally:
         conn.close()
 
@@ -509,39 +514,50 @@ def import_iperf_file_into_db(
 # --- Remote nodes (probes that report back to this main node) ---
 
 def list_remote_nodes(storage: Path) -> list[dict[str, Any]]:
-    """Return all remote nodes (node_id, name, location, created_at, last_seen_at). Token not returned."""
+    """Return all remote nodes (node_id, name, location, address, created_at, last_seen_at). Token not returned."""
     conn = _get_conn(storage)
     try:
+        if _has_column(conn, "remote_nodes", "address"):
+            rows = conn.execute(
+                "SELECT node_id, name, location, COALESCE(address,''), created_at, last_seen_at FROM remote_nodes ORDER BY name"
+            ).fetchall()
+            return [
+                {"node_id": r[0], "name": r[1], "location": r[2] or "", "address": r[3] or "", "created_at": r[4] or "", "last_seen_at": r[5] or ""}
+                for r in rows
+            ]
         rows = conn.execute(
             "SELECT node_id, name, location, created_at, last_seen_at FROM remote_nodes ORDER BY name"
         ).fetchall()
+        return [
+            {"node_id": r[0], "name": r[1], "location": r[2] or "", "address": "", "created_at": r[3] or "", "last_seen_at": r[4] or ""}
+            for r in rows
+        ]
     finally:
         conn.close()
-    return [
-        {
-            "node_id": r[0],
-            "name": r[1],
-            "location": r[2] or "",
-            "created_at": r[3] or "",
-            "last_seen_at": r[4] or "",
-        }
-        for r in rows
-    ]
 
 
 def create_remote_node(
-    storage: Path, node_id: str, name: str, location: str, token: str
+    storage: Path, node_id: str, name: str, location: str, token: str, address: str = ""
 ) -> None:
-    """Insert a new remote node. node_id must be unique slug."""
+    """Insert a new remote node. node_id must be unique slug. address is optional IP or hostname."""
     conn = _get_conn(storage)
     try:
-        conn.execute(
-            """
-            INSERT INTO remote_nodes (node_id, name, location, token)
-            VALUES (?, ?, ?, ?)
-            """,
-            (node_id.strip(), (name or "").strip() or node_id, (location or "").strip(), token),
-        )
+        if _has_column(conn, "remote_nodes", "address"):
+            conn.execute(
+                """
+                INSERT INTO remote_nodes (node_id, name, location, token, address)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (node_id.strip(), (name or "").strip() or node_id, (location or "").strip(), token, (address or "").strip()),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO remote_nodes (node_id, name, location, token)
+                VALUES (?, ?, ?, ?)
+                """,
+                (node_id.strip(), (name or "").strip() or node_id, (location or "").strip(), token),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -561,6 +577,14 @@ def get_remote_node(storage: Path, node_id: str) -> Optional[dict[str, Any]]:
     """Return one node by node_id (without token)."""
     conn = _get_conn(storage)
     try:
+        if _has_column(conn, "remote_nodes", "address"):
+            row = conn.execute(
+                "SELECT node_id, name, location, COALESCE(address,''), created_at, last_seen_at FROM remote_nodes WHERE node_id = ?",
+                (node_id.strip(),),
+            ).fetchone()
+            if not row:
+                return None
+            return {"node_id": row[0], "name": row[1], "location": row[2] or "", "address": row[3] or "", "created_at": row[4] or "", "last_seen_at": row[5] or ""}
         row = conn.execute(
             "SELECT node_id, name, location, created_at, last_seen_at FROM remote_nodes WHERE node_id = ?",
             (node_id.strip(),),
@@ -569,13 +593,7 @@ def get_remote_node(storage: Path, node_id: str) -> Optional[dict[str, Any]]:
         conn.close()
     if not row:
         return None
-    return {
-        "node_id": row[0],
-        "name": row[1],
-        "location": row[2] or "",
-        "created_at": row[3] or "",
-        "last_seen_at": row[4] or "",
-    }
+    return {"node_id": row[0], "name": row[1], "location": row[2] or "", "address": "", "created_at": row[3] or "", "last_seen_at": row[4] or ""}
 
 
 def get_remote_node_by_token(storage: Path, token: str) -> Optional[dict[str, Any]]:
@@ -600,6 +618,39 @@ def update_remote_node_last_seen(storage: Path, node_id: str) -> None:
         conn.execute(
             "UPDATE remote_nodes SET last_seen_at = datetime('now') WHERE node_id = ?",
             (node_id.strip(),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_remote_node(
+    storage: Path,
+    node_id: str,
+    name: Optional[str] = None,
+    location: Optional[str] = None,
+    address: Optional[str] = None,
+) -> None:
+    """Update a remote node's name, location, and/or address. None means leave unchanged."""
+    conn = _get_conn(storage)
+    try:
+        updates = []
+        params: list[Any] = []
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name.strip())
+        if location is not None:
+            updates.append("location = ?")
+            params.append(location.strip())
+        if address is not None and _has_column(conn, "remote_nodes", "address"):
+            updates.append("address = ?")
+            params.append(address.strip())
+        if not updates:
+            return
+        params.append(node_id.strip())
+        conn.execute(
+            "UPDATE remote_nodes SET " + ", ".join(updates) + " WHERE node_id = ?",
+            tuple(params),
         )
         conn.commit()
     finally:
