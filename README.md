@@ -93,3 +93,7 @@ Example: `./deploy-gce.sh acs-hss-server us-central1-a`
   git push origin v1.0.0
   ```
   Then open the repo on GitHub → Releases → Draft a new release, choose the tag, add notes, and publish.
+
+## License
+
+This project is released under the [MIT License](LICENSE).
