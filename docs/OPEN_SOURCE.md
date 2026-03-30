@@ -37,6 +37,10 @@ Run `npx license-checker@25.0.1 --production --direct` in `web/frontend` for a m
 - **Ookla Speedtest CLI** — subject to Ookla’s license and accept-license terms when installed on the server.
 - **iperf3** — BSD-3-Clause (typical system package).
 
+### Verification (Ookla / speedtest.net)
+
+This repository does **not** contain Ookla **source code** or the Speedtest **SDK**. `install.sh` / `web/install-deps.sh` add Ookla’s **package repository** or download the **official CLI binary** from `install.speedtest.net`; `scripts/netperf-tester` and related tools only **invoke** the `speedtest` executable (e.g. `-f json`). Compliance is via **`speedtest --accept-license`** at install time as documented in `PROJECT-CONTEXT.md`.
+
 ## Hosted services
 
 If you connect to external speedtest or iperf endpoints, their operators’ terms apply.
