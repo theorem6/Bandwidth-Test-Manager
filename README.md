@@ -97,3 +97,5 @@ Example: `./deploy-gce.sh acs-hss-server us-central1-a`
 ## License
 
 This project is released under the [MIT License](LICENSE).
+
+**Third-party software:** See [docs/OPEN_SOURCE.md](docs/OPEN_SOURCE.md) for dependency and tooling attribution.
