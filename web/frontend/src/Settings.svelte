@@ -37,22 +37,37 @@
   let webhookSecret = '';
   let checkSlaLoading = false;
   let retentionDays = '';
+  let ooklaLocalPatternsText = '';
+  let ooklaLocalAutoIsp = true;
 
   function ooklaToForm(raw: OoklaServer[]): { id: string; label: string }[] {
     if (!Array.isArray(raw)) return [];
     return raw.map((s) => ({
-      id: s.id === 'auto' ? 'auto' : String(s.id),
+      id: s.id === 'auto' ? 'auto' : s.id === 'local' ? 'local' : String(s.id),
       label: s.label ?? '',
     }));
   }
   function formToOokla(form: { id: string; label: string }[]): OoklaServer[] {
     return form.map((s) => {
       const idStr = (s.id ?? '').trim().toLowerCase();
-      return {
-        id: idStr === 'auto' || idStr === '' ? 'auto' : (parseInt(idStr, 10) || 0),
-        label: (s.label ?? '').trim() || 'Server',
-      };
+      if (idStr === 'auto' || idStr === '') {
+        return { id: 'auto', label: (s.label ?? '').trim() || 'Auto' };
+      }
+      if (idStr === 'local') {
+        return { id: 'local', label: (s.label ?? '').trim() || 'Local ISP' };
+      }
+      const num = parseInt(String(s.id).trim(), 10);
+      if (!Number.isNaN(num) && num > 0) {
+        return { id: num, label: (s.label ?? '').trim() || 'Server' };
+      }
+      return { id: 'auto', label: (s.label ?? '').trim() || 'Auto' };
     });
+  }
+  function parseOoklaPatterns(text: string): string[] {
+    return text
+      .split(/[\n,]+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
   }
   function iperfServerToForm(raw: IperfServer[]): { host: string; label: string }[] {
     if (!Array.isArray(raw)) return [];
@@ -106,9 +121,16 @@
   }
 
   function onOoklaServerSelect(i: number, value: string) {
-    const opt = value === 'auto' ? null : ooklaServerOptions.find((s) => String(s.id) === value);
-    const newLabel = value === 'auto' ? (ooklaServers[i]?.label || 'Auto') : (opt ? fullServerName(opt) : ooklaServers[i]?.label || '');
-    ooklaServers = ooklaServers.map((row, j) => j === i ? { id: value, label: newLabel } : row);
+    const opt = value === 'auto' || value === 'local' ? null : ooklaServerOptions.find((s) => String(s.id) === value);
+    let newLabel = ooklaServers[i]?.label || '';
+    if (value === 'auto') {
+      newLabel = newLabel || 'Auto';
+    } else if (value === 'local') {
+      newLabel = newLabel || 'Local ISP';
+    } else if (opt) {
+      newLabel = fullServerName(opt);
+    }
+    ooklaServers = ooklaServers.map((row, j) => (j === i ? { id: value, label: newLabel } : row));
   }
 
   onMount(async () => {
@@ -136,6 +158,8 @@
       webhookUrl = c.webhook_url ?? '';
       webhookSecret = c.webhook_secret ?? '';
       retentionDays = c.retention_days != null ? String(c.retention_days) : '';
+      ooklaLocalPatternsText = Array.isArray(c.ookla_local_patterns) ? c.ookla_local_patterns.join('\n') : '';
+      ooklaLocalAutoIsp = c.ookla_local_auto_isp !== false;
       loadOoklaOptions();
     } catch {
       message = 'Failed to load config';
@@ -144,7 +168,7 @@
   });
 
   function addOokla() {
-    ooklaServers = [...ooklaServers, { id: 'auto', label: '' }];
+    ooklaServers = [...ooklaServers, { id: 'local', label: 'Local ISP' }];
   }
   function removeOokla(i: number) {
     ooklaServers = ooklaServers.filter((_, idx) => idx !== i);
@@ -204,6 +228,8 @@
         cron_schedule: str(cronSchedule).trim() || '5 * * * *',
         iperf_duration_seconds: duration,
         ookla_servers: formToOokla(ooklaServers),
+        ookla_local_patterns: parseOoklaPatterns(ooklaLocalPatternsText),
+        ookla_local_auto_isp: ooklaLocalAutoIsp,
         iperf_servers: iperfServers.map((s) => ({ host: str(s.host).trim() || 'localhost', label: str(s.label).trim() || 'Server' })),
         iperf_tests: iperfTests.map((t) => ({ name: str(t.name || 'test').trim(), args: str(t.args || '').trim() })),
         probe_id: str(probeId).trim(),
@@ -278,7 +304,7 @@
     <div class="mb-3">
       <label class="form-label" for="site-url">Site URL (HTTPS)</label>
       <p class="form-text text-muted small">URL only, no port (e.g. https://host.example.com/netperf/).</p>
-      <input id="site-url" type="url" class="form-control form-control-sm" bind:value={siteUrl} placeholder="https://hss.wisptools.io/netperf/" />
+      <input id="site-url" type="url" class="form-control form-control-sm" bind:value={siteUrl} placeholder="https://hyperionsolutionsgroup.com/netperf/" />
     </div>
     <div class="mb-3">
       <label class="form-label" for="ssl-cert">SSL certificate path</label>
@@ -323,7 +349,26 @@
 
     <hr class="my-4" />
     <h2 class="h6 mb-3">Ookla Speedtest servers</h2>
-    <p class="form-text text-muted small mb-2">Add servers to test. Choose <strong>Auto</strong> or pick from all available Ookla servers.</p>
+    <p class="form-text text-muted small mb-2">
+      <strong>Local (ISP)</strong> is the default for ISPs: no patterns required. It uses Ookla's server list, optionally matches your line's ISP name (auto-detected, cached 7 days), then picks the smallest distance (km).
+      <strong>Auto</strong> is a second run using Ookla's built-in server choice (good as a cross-check). Add more rows for specific server IDs if you want.
+    </p>
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" id="ookla-auto-isp" bind:checked={ooklaLocalAutoIsp} />
+      <label class="form-check-label small" for="ookla-auto-isp">Auto-detect ISP when patterns are empty</label>
+      <p class="form-text text-muted small mb-0">Runs one Speedtest every 7 days (cached under <code class="small">$NETPERF_STORAGE</code> or <code class="small">/var/log/netperf/.ookla_isp_cache.json</code>) to learn your ISP name, then matches that to servers in the list. Turn off to use distance-only (nearest server in the list).</p>
+    </div>
+    <div class="mb-3">
+      <label class="form-label small" for="ookla-local-patterns">Extra name patterns (optional)</label>
+      <textarea
+        id="ookla-local-patterns"
+        class="form-control form-control-sm font-monospace"
+        rows="2"
+        placeholder="Only if auto-detect is not enough — one per line or comma-separated"
+        bind:value={ooklaLocalPatternsText}
+      ></textarea>
+      <p class="form-text text-muted small mb-0">If set, <strong>only</strong> these substrings are used for <strong>Local (ISP)</strong> rows (auto-detect is skipped). Matches name, location, host, or sponsor.</p>
+    </div>
     {#if ooklaOptionsError}
       <p class="small text-warning mb-2">Server list: {ooklaOptionsError}. You can still enter a server ID manually below.</p>
     {/if}
@@ -339,13 +384,14 @@
                 value={row.id}
                 on:change={(e) => onOoklaServerSelect(i, e.currentTarget.value)}
               >
-                <option value="auto">Auto (nearest)</option>
+                <option value="local">Local (ISP / nearest match)</option>
+                <option value="auto">Auto (Ookla default)</option>
                 {#each ooklaServerOptions as srv}
                   <option value={srv.id}>{fullServerName(srv)}</option>
                 {/each}
               </select>
             {:else}
-              <input type="text" class="form-control form-control-sm" placeholder="auto or server ID" bind:value={row.id} />
+              <input type="text" class="form-control form-control-sm" placeholder="local, auto, or server ID" bind:value={row.id} />
             {/if}
           </div>
           <div class="col-md-4">

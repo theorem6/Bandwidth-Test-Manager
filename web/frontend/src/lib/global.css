@@ -1,9 +1,9 @@
 /**
- * WISPTools global styles for Bandwidth Test Manager
- * Uses theme.css variables; overrides Bootstrap to match WISPTools look.
+ * Global styles for Bandwidth Test Manager (Hyperion Solutions Group)
+ * Uses theme.css variables; overrides Bootstrap to match the app theme.
  */
 
-/* Legacy / compatibility mappings (WISPTools app.css) */
+/* Legacy / compatibility mappings */
 :root {
   --bg-primary: var(--color-background-primary);
   --bg-secondary: var(--color-background-secondary);
@@ -51,7 +51,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Bootstrap overrides – WISPTools theme */
+/* Bootstrap overrides – app theme */
 :root {
   --bs-primary: var(--color-primary);
   --bs-primary-rgb: 0, 217, 255;
@@ -82,7 +82,7 @@ body {
   --bs-primary-rgb: 8, 145, 178;
 }
 
-/* Cards – WISPTools style */
+/* Cards */
 .bwm-card,
 .card {
   background: var(--card-bg);
@@ -172,7 +172,7 @@ body {
   gap: 0.75rem;
 }
 
-.navbar .wisptools-logo {
+.navbar .brand-logo {
   width: 40px;
   height: 40px;
   flex-shrink: 0;
@@ -226,7 +226,7 @@ body {
   color: var(--color-text-tertiary);
 }
 
-/* Modal – WISPTools modal.css */
+/* Modal */
 .modal-backdrop.show {
   background: rgba(15, 23, 42, 0.55);
   backdrop-filter: blur(6px);
@@ -260,7 +260,7 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-/* Loading spinner – WISPTools */
+/* Loading spinner */
 .spinner {
   width: 40px;
   height: 40px;

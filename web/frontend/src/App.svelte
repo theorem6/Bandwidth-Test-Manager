@@ -123,10 +123,10 @@
           <i class="bi bi-list" style="font-size:1.5rem"></i>
         </button>
         <a class="navbar-brand brand-wrap text-decoration-none d-flex align-items-center" href="/netperf/">
-          <img src="/netperf/static/wisptools-logo.svg" alt="wisptools.io" class="wisptools-logo" />
+          <img src="/netperf/static/hyperion-logo.svg" alt="Hyperion Solutions Group" class="brand-logo" />
           <div>
             <span class="brand-title">Bandwidth Test Manager</span>
-            <p class="brand-subtitle mb-0">wisptools.io</p>
+            <p class="brand-subtitle mb-0">hyperionsolutionsgroup.com</p>
           </div>
         </a>
         <div class="navbar-nav ms-auto align-items-center">
@@ -191,10 +191,10 @@
     <nav class="navbar navbar-expand navbar-dark bg-primary">
       <div class="container-fluid">
         <a class="navbar-brand brand-wrap text-decoration-none d-flex align-items-center" href="/netperf/">
-          <img src="/netperf/static/wisptools-logo.svg" alt="wisptools.io" class="wisptools-logo" />
+          <img src="/netperf/static/hyperion-logo.svg" alt="Hyperion Solutions Group" class="brand-logo" />
           <div>
             <span class="brand-title">Bandwidth Test Manager</span>
-            <p class="brand-subtitle mb-0">wisptools.io</p>
+            <p class="brand-subtitle mb-0">hyperionsolutionsgroup.com</p>
           </div>
         </a>
         <div class="navbar-nav ms-auto align-items-center">

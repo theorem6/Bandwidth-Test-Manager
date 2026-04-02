@@ -66,6 +66,16 @@ START() {
 		outfile="$STORAGE_LOCATION/${idx}_speedtest-$(echo "$label" | tr '[:upper:]' '[:lower:]')"
 		if [ "$id" = "auto" ]; then
 			$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+		elif [ "$id" = "local" ]; then
+			RESOLVED=""
+			if command -v netperf-resolve-ookla-local >/dev/null 2>&1; then
+				RESOLVED=$(netperf-resolve-ookla-local "$CONFIG_FILE" 2>/dev/null || true)
+			fi
+			if [ -n "$RESOLVED" ]; then
+				$SPEEDTEST_CMD -s "$RESOLVED" -f json >> "$outfile" 2>/dev/null || true
+			else
+				$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+			fi
 		else
 			$SPEEDTEST_CMD -s "$id" -f json >> "$outfile" 2>/dev/null || true
 		fi

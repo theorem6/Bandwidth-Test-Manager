@@ -32,7 +32,7 @@ sudo ./install.sh
 
 - Copies project to the instance and runs `install.sh`. If port 8080 is in use on the server, the web UI is installed on 8081. Does not overwrite existing `/etc/netperf/config.json`.
 
-**HTTPS (server already has a certificate):** On the server run `sudo ./web/setup-https.sh [domain]` (e.g. `hss.wisptools.io`). The script detects Let's Encrypt or system certs, installs nginx if needed, and configures a reverse proxy to the web app. If nginx reports a conflicting server name, add inside your existing server block: `include /etc/nginx/snippets/netperf-proxy.conf;` then `sudo nginx -t && sudo systemctl reload nginx`. Ensure firewall allows tcp/443.
+**HTTPS (server already has a certificate):** On the server run `sudo ./web/setup-https.sh [domain]` (e.g. `hyperionsolutionsgroup.com` or a hostname that matches your certificate). The script detects Let's Encrypt or system certs, installs nginx if needed, and configures a reverse proxy to the web app. If nginx reports a conflicting server name, add inside your existing server block: `include /etc/nginx/snippets/netperf-proxy.conf;` then `sudo nginx -t && sudo systemctl reload nginx`. Ensure firewall allows tcp/443.
 
 ---
 
@@ -49,11 +49,13 @@ sudo speedtest --accept-license
 ## Config (Ookla & iperf sites)
 
 - Path: `/etc/netperf/config.json`.
-- **site_url:** full HTTPS URL where the app is served (e.g. `https://hss.wisptools.io/netperf/`). Used by the HTTPS setup script for redirects and domain detection.
+- **site_url:** full HTTPS URL where the app is served (e.g. `https://hyperionsolutionsgroup.com/netperf/`). Used by the HTTPS setup script for redirects and domain detection.
 - **ssl_cert_path** / **ssl_key_path:** server paths to the TLS certificate and private key. The `setup-https.sh` script reads these from config so the server uses the cert you configure.
 - **speedtest_limit_mbps:** optional number (e.g. `100`) or `null`. When set, speedtest runs are throttled using `trickle`. Omit or leave empty for no limit.
 - **cron_schedule:** cron expression for when tests run (e.g. `5 * * * *` = 5 min past every hour). Used by `netperf-scheduler start`. Editable in Settings.
-- **ookla_servers:** list of `{ "id": <number> or "auto", "label": "Label" }`. Use `"id": "auto"` for auto-selected server.
+- **ookla_servers:** list of `{ "id": <number> or "auto" or "local", "label": "Label" }`. Use `"id": "auto"` for Ookla’s default server selection (no `-s`). Use `"id": "local"` for automated ISP/near-POP selection via **`netperf-resolve-ookla-local`**: runs `speedtest -L -f json`, then (see below) picks one server id and `netperf-tester` runs `speedtest -s <id> -f json`. If resolution fails, behaves like `auto`.
+- **ookla_local_patterns:** optional list of strings. If **non-empty**, only these substrings are used to filter the server list (name, location, host, sponsor; case-insensitive); **ookla_local_auto_isp** is ignored for filtering. If **empty**, behavior depends on **ookla_local_auto_isp**.
+- **ookla_local_auto_isp:** boolean (default **true**). When **true** and patterns are empty: read ISP from **`$NETPERF_STORAGE/.ookla_isp_cache.json`** (or `/var/log/netperf/.ookla_isp_cache.json`); if missing or older than **7 days**, run one `speedtest -f json` (Ookla auto), parse `isp` / `client.isp`, update cache, then prefer servers whose listing matches significant tokens from that ISP name; if no match, use all servers. Always then choose the smallest **distance** (km) among candidates. When **false** and patterns are empty, all listed servers are candidates (distance only).
 - **iperf_servers:** list of `{ "host": "hostname", "label": "label" }`.
 - **iperf_tests:** list of `{ "name": "single", "args": "-P 1" }` (args are iperf3 client flags).
 - **iperf_duration_seconds:** duration in seconds for each iperf3 test (default 10). Editable in Settings.
@@ -73,6 +75,7 @@ sudo speedtest --accept-license
 | **netperf-scheduler** | `/bin/netperf-scheduler` | Enable/disable automated speed test logging via cron (schedule from config) |
 | **netperf-cron-run** | `/bin/netperf-cron-run` | Wrapper for cron: runs netperf-tester with today’s log dir |
 | **netperf-tester** | `/bin/netperf-tester` | Run tests (Ookla + iperf3) using **config**; append to daily log dir |
+| **netperf-resolve-ookla-local** | `/bin/netperf-resolve-ookla-local` | Resolve numeric Ookla server id for `"local"` mode (Python 3); called by netperf-tester |
 | **netperf-reporter** | `/bin/netperf-reporter` | Parse and combine output (speedtest CSV; locations from filenames) |
 
 All must be run as root. Tester reads `/etc/netperf/config.json` (or `NETPERF_CONFIG`).
@@ -95,12 +98,7 @@ All must be run as root. Tester reads `/etc/netperf/config.json` (or `NETPERF_CO
 
 **Tests run (in order, with ~10s sleep between):**
 
-1. **Ookla Speedtest (JSON):**
-   - Local (auto server) → `0_speedtest-local`
-   - Server 10171 (FL) → `1_speedtest-fl`
-   - Server 53398 (IL) → `2_speedtest-il`
-   - Server 58326 (NC) → `3_speedtest-nc`
-   - Server 8864 (WA) → `4_speedtest-wa`
+1. **Ookla Speedtest (JSON):** one run per entry in **ookla_servers** (filename prefix `0_`, `1_`, … and label from config, lowercased). Each entry uses `speedtest -f json`, or `speedtest -s <id> -f json` for a fixed id, or for `"local"` runs `netperf-resolve-ookla-local` then `-s` that id (fallback: same as auto).
 
 2. **iperf3** (to `9000.mtu.he.net`):
    - Single stream → `iperf-single-stream.txt`
@@ -145,7 +143,7 @@ echo -e "alias crontab='EDITOR=nano crontab'" >> .bash_aliases && . .bash_aliase
 
 ## Web interface
 
-- **URL:** Use the **Site URL (HTTPS)** configured in Settings (e.g. `https://hss.wisptools.io/netperf/`). No port in the URL; nginx serves over HTTPS on 443. After `install.sh`, run `sudo ./web/setup-https.sh` so the server uses the cert; then open that URL.
+- **URL:** Use the **Site URL (HTTPS)** configured in Settings (e.g. `https://hyperionsolutionsgroup.com/netperf/`). No port in the URL; nginx serves over HTTPS on 443. After `install.sh`, run `sudo ./web/setup-https.sh` so the server uses the cert; then open that URL.
 - **Auth:** Built-in users `bwadmin` (admin) and `user` (readonly) until **Setup → Users** is used to set a password; then config `auth_users` (hashed) is used. Landing page is read-only with scheduler toggle; **Login** gives admin menu.
 - **Features:** **Dashboard** — date selector, separate graphs (download/upload/latency, iperf), trend over time, Run test now, CSV and summary export. **Remote nodes** — add nodes (name, location); each gets a unique token and a **downloadable bash script** to run on the remote machine; script runs speedtest (and optional iperf3), POSTs results to this server; each node has its own dashboard page (data filtered by probe_id). **Setup** — backend status, install deps, **Users** (configurable auth), **Recent SLA alerts**, timezone/NTP, purge old data. **Scheduler** — start/stop cron. **Settings** — site URL, SSL, speed limit, cron, Ookla/iperf, probe identity, SLA thresholds & webhook, retention, **Appearance** (light/dark/system) (writes `/etc/netperf/config.json`).
 - **Service:** `systemctl start|stop|status netperf-web` (Uvicorn on 127.0.0.1:8080 or 8081; nginx proxies to it).

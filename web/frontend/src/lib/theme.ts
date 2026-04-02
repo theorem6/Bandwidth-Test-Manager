@@ -13,7 +13,7 @@ function getStored(): ThemeMode {
   if (typeof window === 'undefined') return 'system';
   const v = localStorage.getItem(STORAGE_KEY);
   if (v === 'light' || v === 'dark' || v === 'system') return v;
-  return 'dark'; /* default to dark to match existing WISPTools look */
+  return 'dark'; /* default to dark theme */
 }
 
 function getResolvedTheme(mode: ThemeMode): 'light' | 'dark' {

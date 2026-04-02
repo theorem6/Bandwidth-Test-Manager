@@ -67,8 +67,8 @@ echo "=== Accepting Ookla license ==="
 speedtest --accept-license --accept-gdpr || true
 
 echo "=== Installing scripts to /bin ==="
-cp -f scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter scripts/netperf-cron-run /bin/
-chmod 755 /bin/netperf-scheduler /bin/netperf-tester /bin/netperf-reporter /bin/netperf-cron-run
+cp -f scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter scripts/netperf-cron-run scripts/netperf-resolve-ookla-local /bin/
+chmod 755 /bin/netperf-scheduler /bin/netperf-tester /bin/netperf-reporter /bin/netperf-cron-run /bin/netperf-resolve-ookla-local
 
 echo "=== Config and log directories ==="
 mkdir -p /etc/netperf /var/log/netperf
@@ -95,7 +95,7 @@ if [ "$INSTALL_WEB" = true ]; then
 	mkdir -p "$WEB_DIR" "$WEB_DIR/scripts"
 	# Copy full web app (main.py, db.py, static/, requirements.txt, etc.)
 	cp -r web/* "$WEB_DIR"
-	cp -f scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter scripts/netperf-cron-run "$WEB_DIR/scripts/" 2>/dev/null || true
+	cp -f scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter scripts/netperf-cron-run scripts/netperf-resolve-ookla-local "$WEB_DIR/scripts/" 2>/dev/null || true
 	rm -rf "$WEB_DIR/venv"
 	python3 -m venv "$WEB_DIR/venv"
 	if [ -f "$WEB_DIR/requirements.txt" ]; then

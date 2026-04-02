@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""Resolve Ookla server id when config uses id \"local\" (ISP / nearest POP).
+
+Reads config from argv[1] or NETPERF_CONFIG (default /etc/netperf/config.json).
+
+1) If ookla_local_patterns is non-empty: servers matching any pattern (substring,
+   case-insensitive on name/location/host/sponsor).
+
+2) If patterns are empty and ookla_local_auto_isp is not false: load cached ISP name
+   from NETPERF_STORAGE (default /var/log/netperf)/.ookla_isp_cache.json (7-day TTL).
+   If stale/missing, run one \"speedtest -f json\" (Ookla auto server) and cache isp.
+   Prefer servers whose listing matches significant tokens from that ISP name; if none
+   match, use all listed servers.
+
+3) Among candidates, pick smallest Ookla \"distance\" (km).
+
+Prints numeric server id only on stdout; prints nothing on failure (caller uses auto).
+
+Called by netperf-tester; requires python3.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CACHE_TTL_SEC = 7 * 24 * 3600
+PROBE_TIMEOUT_SEC = 120
+LIST_TIMEOUT_SEC = 90
+
+ISP_STOPWORDS = frozenset(
+    {
+        "inc",
+        "llc",
+        "ltd",
+        "corp",
+        "corporation",
+        "internet",
+        "communications",
+        "communication",
+        "network",
+        "networks",
+        "services",
+        "service",
+        "the",
+        "and",
+        "co",
+        "company",
+        "group",
+        "holdings",
+        "llp",
+        "plc",
+        "sa",
+        "bv",
+        "nv",
+    }
+)
+
+
+def parse_speedtest_list_output(text: str) -> list[dict]:
+    """Parse speedtest -L -f json (single JSON, JSONL, or wrapped servers list)."""
+    servers: list[dict] = []
+    text = (text or "").strip()
+    if not text:
+        return []
+    try:
+        single = json.loads(text)
+        if isinstance(single, dict) and isinstance(single.get("servers"), list):
+            for s in single.get("servers", []):
+                if isinstance(s, dict) and s.get("id") is not None:
+                    servers.append(s)
+        elif isinstance(single, list):
+            for s in single:
+                if isinstance(s, dict) and s.get("id") is not None:
+                    servers.append(s)
+        elif isinstance(single, dict) and single.get("id") is not None:
+            servers.append(single)
+    except json.JSONDecodeError:
+        pass
+    if not servers:
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and isinstance(obj.get("servers"), list):
+                    for s in obj.get("servers", []):
+                        if isinstance(s, dict) and s.get("id") is not None:
+                            servers.append(s)
+                elif isinstance(obj, dict) and obj.get("id") is not None:
+                    servers.append(obj)
+            except json.JSONDecodeError:
+                continue
+    seen: set[int] = set()
+    uniq: list[dict] = []
+    for s in servers:
+        try:
+            sid = int(s["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if sid in seen:
+            continue
+        seen.add(sid)
+        uniq.append(s)
+    return uniq
+
+
+def haystack(s: dict) -> str:
+    parts = [s.get("name"), s.get("location"), s.get("country"), s.get("host"), s.get("sponsor")]
+    return " ".join(str(p or "") for p in parts).lower()
+
+
+def server_distance(s: dict) -> float:
+    d = s.get("distance")
+    if d is None:
+        return float("inf")
+    try:
+        return float(d)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def extract_isp_from_probe_output(text: str) -> str:
+    """Parse speedtest -f json stdout; return isp string or empty."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        isp = obj.get("isp")
+        if isinstance(isp, str) and isp.strip():
+            return isp.strip()
+        client = obj.get("client")
+        if isinstance(client, dict):
+            for key in ("isp", "ispName", "isp_name"):
+                v = client.get(key)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            isp = obj.get("isp")
+            if isinstance(isp, str) and isp.strip():
+                return isp.strip()
+            client = obj.get("client")
+            if isinstance(client, dict):
+                for key in ("isp", "ispName", "isp_name"):
+                    v = client.get(key)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+    except json.JSONDecodeError:
+        pass
+    return ""
+
+
+def isp_tokens(isp: str) -> list[str]:
+    """Tokens from Ookla ISP name for fuzzy server matching."""
+    isp_norm = re.sub(r"[^\w\s&@.]", " ", (isp or "").lower())
+    out: list[str] = []
+    for t in isp_norm.split():
+        t = t.strip(".&@")
+        if len(t) < 4 or t in ISP_STOPWORDS:
+            continue
+        if t not in out:
+            out.append(t)
+    return out[:12]
+
+
+def cache_path(storage_root: Path) -> Path:
+    return storage_root / ".ookla_isp_cache.json"
+
+
+def read_isp_cache(path: Path) -> tuple[str, float]:
+    """Return (isp, mtime_epoch) or ('', 0)."""
+    try:
+        st = path.stat()
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        isp = str(data.get("isp") or "").strip()
+        return isp, st.st_mtime
+    except (OSError, json.JSONDecodeError, TypeError, KeyError):
+        return "", 0.0
+
+
+def write_isp_cache(path: Path, isp: str) -> None:
+    path.parent.mkdir(parents=True, mode=0o755, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    payload = {"isp": isp, "updated": int(time.time())}
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    tmp.replace(path)
+
+
+def probe_isp(bin_path: str) -> str:
+    try:
+        r = subprocess.run(
+            [bin_path, "-f", "json"],
+            capture_output=True,
+            text=True,
+            timeout=PROBE_TIMEOUT_SEC,
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    return extract_isp_from_probe_output(r.stdout or "")
+
+
+def main() -> None:
+    config_path = Path(
+        sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NETPERF_CONFIG", "/etc/netperf/config.json")
+    )
+    if not config_path.is_file():
+        return
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+
+    raw_pats = cfg.get("ookla_local_patterns")
+    patterns: list[str] = []
+    if isinstance(raw_pats, list):
+        patterns = [str(p).strip().lower() for p in raw_pats if str(p).strip()]
+
+    auto_isp = cfg.get("ookla_local_auto_isp")
+    if auto_isp is None:
+        auto_isp = True
+    use_auto_isp = bool(auto_isp)
+
+    storage = Path(os.environ.get("NETPERF_STORAGE", "/var/log/netperf"))
+
+    bin_path = "/usr/local/bin/speedtest" if Path("/usr/local/bin/speedtest").exists() else "speedtest"
+    try:
+        r = subprocess.run(
+            [bin_path, "-L", "-f", "json"],
+            capture_output=True,
+            text=True,
+            timeout=LIST_TIMEOUT_SEC,
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return
+
+    servers = parse_speedtest_list_output((r.stdout or "").strip())
+    if not servers:
+        return
+
+    candidates: list[dict]
+
+    if patterns:
+        candidates = [s for s in servers if any(p in haystack(s) for p in patterns)]
+    elif use_auto_isp:
+        cfile = cache_path(storage)
+        isp_guess = ""
+        mtime = 0.0
+        if cfile.is_file():
+            isp_guess, mtime = read_isp_cache(cfile)
+        now = time.time()
+        if not isp_guess or (now - mtime) > CACHE_TTL_SEC:
+            isp_guess = probe_isp(bin_path)
+            if isp_guess:
+                try:
+                    write_isp_cache(cfile, isp_guess)
+                except OSError:
+                    pass
+        tokens = isp_tokens(isp_guess) if isp_guess else []
+        if tokens:
+            matched = [s for s in servers if any(t in haystack(s) for t in tokens)]
+            candidates = matched if matched else servers
+        else:
+            candidates = servers
+    else:
+        candidates = servers
+
+    if not candidates:
+        return
+
+    best = min(candidates, key=server_distance)
+    try:
+        sid = int(best["id"])
+    except (KeyError, TypeError, ValueError):
+        return
+    print(sid, end="")
+
+
+if __name__ == "__main__":
+    main()

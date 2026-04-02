@@ -49,7 +49,7 @@ if command -v speedtest &>/dev/null; then
 fi
 echo "=== Installing netperf scripts to /bin ==="
 if [ -n "$SCRIPTS_SRC" ]; then
-	for f in netperf-scheduler netperf-tester netperf-reporter netperf-cron-run; do
+	for f in netperf-scheduler netperf-tester netperf-reporter netperf-cron-run netperf-resolve-ookla-local; do
 		[ -f "$SCRIPTS_SRC/$f" ] && cp -f "$SCRIPTS_SRC/$f" /bin/ && chmod 755 "/bin/$f"
 	done
 fi
@@ -59,7 +59,7 @@ if [ ! -f /etc/netperf/config.json ]; then
 	if [ -f "$PARENT/etc/netperf-config.json" ]; then
 		cp -f "$PARENT/etc/netperf-config.json" /etc/netperf/config.json
 	else
-		echo '{"site_url":"","ssl_cert_path":"","ssl_key_path":"","speedtest_limit_mbps":null,"ookla_servers":[{"id":"auto","label":"Local"}],"iperf_servers":[],"iperf_tests":[{"name":"single","args":"-P 1"}]}' > /etc/netperf/config.json
+		echo '{"site_url":"","ssl_cert_path":"","ssl_key_path":"","speedtest_limit_mbps":null,"ookla_local_patterns":[],"ookla_local_auto_isp":true,"ookla_servers":[{"id":"local","label":"ISP / nearest (auto)"},{"id":"auto","label":"Public reference"}],"iperf_servers":[],"iperf_tests":[{"name":"single","args":"-P 1"}]}' > /etc/netperf/config.json
 	fi
 fi
 echo "Done."

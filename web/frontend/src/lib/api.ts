@@ -66,7 +66,7 @@ export async function loginWithCredentials(username: string, password: string): 
 }
 
 export interface OoklaServer {
-  id: number | 'auto';
+  id: number | 'auto' | 'local';
   label: string;
 }
 
@@ -94,6 +94,10 @@ export interface Config {
   cron_schedule?: string;
   iperf_duration_seconds?: number;
   ookla_servers?: OoklaServer[];
+  /** Substrings to match your Ookla-hosted server name/location (see Settings). Used with id \"local\". */
+  ookla_local_patterns?: string[];
+  /** When true and patterns are empty, infer ISP from a cached speedtest probe to pick a matching server. */
+  ookla_local_auto_isp?: boolean;
   iperf_servers?: IperfServer[];
   iperf_tests?: IperfTest[];
   probe_id?: string;

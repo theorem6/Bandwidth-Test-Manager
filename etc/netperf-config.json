@@ -1,7 +1,7 @@
 {
-  "site_url": "https://hss.wisptools.io/netperf/",
-  "ssl_cert_path": "/etc/letsencrypt/live/hss.wisptools.io/fullchain.pem",
-  "ssl_key_path": "/etc/letsencrypt/live/hss.wisptools.io/privkey.pem",
+  "site_url": "https://hyperionsolutionsgroup.com/netperf/",
+  "ssl_cert_path": "/etc/letsencrypt/live/hyperionsolutionsgroup.com/fullchain.pem",
+  "ssl_key_path": "/etc/letsencrypt/live/hyperionsolutionsgroup.com/privkey.pem",
   "speedtest_limit_mbps": null,
   "probe_id": "",
   "location_name": "",
@@ -16,12 +16,11 @@
   "webhook_secret": "",
   "retention_days": null,
   "auth_users": [],
+  "ookla_local_patterns": [],
+  "ookla_local_auto_isp": true,
   "ookla_servers": [
-    { "id": "auto", "label": "Local" },
-    { "id": 10171, "label": "FL" },
-    { "id": 53398, "label": "IL" },
-    { "id": 58326, "label": "NC" },
-    { "id": 8864, "label": "WA" }
+    { "id": "local", "label": "ISP / nearest (auto)" },
+    { "id": "auto", "label": "Public reference" }
   ],
   "iperf_servers": [
     { "host": "9000.mtu.he.net", "label": "he-net" }

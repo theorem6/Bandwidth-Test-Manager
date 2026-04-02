@@ -3,7 +3,7 @@
 # Run on the server as root. Uses nginx as reverse proxy; Flask stays on 127.0.0.1:8080.
 # Certificate and URL can be set in the web UI (Settings) and stored in /etc/netperf/config.json.
 # Usage: sudo ./setup-https.sh [domain]
-# Example: sudo ./setup-https.sh hss.wisptools.io
+# Example: sudo ./setup-https.sh hyperionsolutionsgroup.com
 
 set -e
 

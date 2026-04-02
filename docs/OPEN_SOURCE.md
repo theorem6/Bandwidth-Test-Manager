@@ -39,7 +39,7 @@ Run `npx license-checker@25.0.1 --production --direct` in `web/frontend` for a m
 
 ### Verification (Ookla / speedtest.net)
 
-This repository does **not** contain Ookla **source code** or the Speedtest **SDK**. `install.sh` / `web/install-deps.sh` add Ookla’s **package repository** or download the **official CLI binary** from `install.speedtest.net`; `scripts/netperf-tester` and related tools only **invoke** the `speedtest` executable (e.g. `-f json`). Compliance is via **`speedtest --accept-license`** at install time as documented in `PROJECT-CONTEXT.md`.
+This repository does **not** contain Ookla **source code** or the Speedtest **SDK**. `install.sh` / `web/install-deps.sh` add Ookla’s **package repository** or download the **official CLI binary** from `install.speedtest.net`; `scripts/netperf-tester` and `scripts/netperf-resolve-ookla-local` only **invoke** the `speedtest` executable (e.g. `-L`, `-f json`, `-s`). Compliance is via **`speedtest --accept-license`** at install time as documented in `PROJECT-CONTEXT.md`.
 
 ## Hosted services
 

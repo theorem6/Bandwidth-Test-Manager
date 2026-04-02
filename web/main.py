@@ -116,6 +116,8 @@ def get_config() -> dict:
         "cron_schedule": "5 * * * *",
         "iperf_duration_seconds": 10,
         "ookla_servers": [],
+        "ookla_local_patterns": [],
+        "ookla_local_auto_isp": True,
         "iperf_servers": [],
         "iperf_tests": [],
         "probe_id": "",
@@ -782,6 +784,16 @@ async def api_config_set(request: Request, _user: tuple[str, str] = Depends(requ
             cur["iperf_duration_seconds"] = max(1, min(300, n))  # clamp 1–300 seconds
         except (TypeError, ValueError):
             cur["iperf_duration_seconds"] = 10
+    if "ookla_local_patterns" in data:
+        raw_pats = data.get("ookla_local_patterns")
+        if isinstance(raw_pats, list):
+            cur["ookla_local_patterns"] = [str(x).strip() for x in raw_pats if str(x).strip()]
+        elif isinstance(raw_pats, str):
+            cur["ookla_local_patterns"] = [p.strip() for p in re.split(r"[\n,]+", raw_pats) if p.strip()]
+        else:
+            cur["ookla_local_patterns"] = []
+    if "ookla_local_auto_isp" in data:
+        cur["ookla_local_auto_isp"] = bool(data.get("ookla_local_auto_isp"))
     if "ookla_servers" in data:
         raw_ookla = data.get("ookla_servers")
         if isinstance(raw_ookla, list):
@@ -791,7 +803,10 @@ async def api_config_set(request: Request, _user: tuple[str, str] = Depends(requ
                     continue
                 sid = s.get("id")
                 label = str(s.get("label") or "").strip() or "Server"
-                if sid == "auto" or sid is None or (isinstance(sid, str) and sid.strip().lower() in ("", "auto")):
+                sid_lower = (sid.strip().lower() if isinstance(sid, str) else None)
+                if sid == "local" or sid_lower == "local":
+                    cur["ookla_servers"].append({"id": "local", "label": label or "Local ISP"})
+                elif sid == "auto" or sid is None or sid_lower in ("", "auto"):
                     cur["ookla_servers"].append({"id": "auto", "label": label or "Auto"})
                 else:
                     try:

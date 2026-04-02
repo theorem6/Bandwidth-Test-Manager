@@ -1,6 +1,6 @@
 /**
  * Theme: light (default) and dark. Use data-theme="light" | "dark" on <html>.
- * Light = light backgrounds, dark text, teal accent. Dark = wisptools.io style.
+ * Light = light backgrounds, dark text, teal accent. Dark = default app style.
  */
 
 /* Light theme (default) */
@@ -116,7 +116,7 @@
   --line-height-relaxed: 1.75;
 }
 
-/* Dark theme (wisptools.io style) */
+/* Dark theme (default) */
 [data-theme="dark"] {
   --color-primary: #00d9ff;
   --color-primary-hover: #00f2fe;
