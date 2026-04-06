@@ -6,12 +6,13 @@
   import Setup from './Setup.svelte';
   import RemoteNodes from './RemoteNodes.svelte';
   import NodeView from './NodeView.svelte';
+  import VoiceReference from './VoiceReference.svelte';
   import { getStatus, schedulerStart, schedulerStop, loginWithCredentials } from './lib/api';
   import { auth } from './lib/auth';
   import { loading } from './lib/stores';
   import { initTheme } from './lib/theme';
 
-  type View = 'dashboard' | 'scheduler' | 'settings' | 'setup' | 'nodes' | 'node';
+  type View = 'dashboard' | 'scheduler' | 'settings' | 'setup' | 'nodes' | 'node' | 'voice';
   let currentView: View = 'dashboard';
   let selectedNodeId: string | null = null;
   let selectedNodeName = '';
@@ -159,12 +160,15 @@
           <a href="/netperf/" class="nav-link" class:active={currentView === 'nodes' || currentView === 'node'} on:click|preventDefault={() => { currentView = 'nodes'; selectedNodeId = null; sidebarOpen = false; }}>
             <i class="bi bi-hdd-network"></i> Remote nodes
           </a>
+          <a href="/netperf/" class="nav-link" class:active={currentView === 'voice'} on:click|preventDefault={() => { currentView = 'voice'; sidebarOpen = false; }}>
+            <i class="bi bi-telephone"></i> Voice / SIP domain
+          </a>
         </nav>
       </aside>
 
       <main class="content">
         <h1 class="h4 mb-3 mb-md-4 page-title">
-          {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : currentView === 'setup' ? 'Setup' : currentView === 'nodes' ? 'Remote nodes' : currentView === 'node' ? selectedNodeName || 'Node' : 'Dashboard'}
+          {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : currentView === 'setup' ? 'Setup' : currentView === 'nodes' ? 'Remote nodes' : currentView === 'voice' ? 'Voice / SIP domain' : currentView === 'node' ? selectedNodeName || 'Node' : 'Dashboard'}
         </h1>
         {#if currentView === 'dashboard'}
           <Dashboard onToast={setToast} showAdminActions={true} />
@@ -175,6 +179,8 @@
           <NodeView nodeId={selectedNodeId} onToast={setToast} />
         {:else if currentView === 'nodes'}
           <RemoteNodes onToast={setToast} onOpenNode={openNodeDashboard} />
+        {:else if currentView === 'voice'}
+          <VoiceReference />
         {:else if currentView === 'scheduler'}
           <Scheduler {loadStatus} onToast={setToast} />
         {:else if currentView === 'settings'}

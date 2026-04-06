@@ -442,3 +442,33 @@ export async function getRemoteScript(nodeId: string): Promise<string> {
   if (!r.ok) throw new Error('Failed to download script');
   return r.text();
 }
+
+/** Voice / SIP domain schema from GET /api/voice/schema */
+export interface VoiceBoundContext {
+  id: string;
+  label: string;
+  entities: string[];
+}
+
+export interface VoiceCarrierRow {
+  dimension: string;
+  bandwidth: string;
+  telnyx: string;
+  twilio: string;
+}
+
+export interface VoiceDomainSchema {
+  bounded_contexts: VoiceBoundContext[];
+  entities: Record<string, string>;
+  state_machines: Record<string, string[]>;
+  carrier_comparison: VoiceCarrierRow[];
+  pragmatic_recommendation: string;
+  arcgis: { note: string; uses: string[] };
+  phased_rollout: { phase: number; scope: string }[];
+  first_build_in_code: string[];
+  enums: Record<string, string[]>;
+}
+
+export async function fetchVoiceSchema(): Promise<VoiceDomainSchema> {
+  return fetchApi<VoiceDomainSchema>('/api/voice/schema');
+}

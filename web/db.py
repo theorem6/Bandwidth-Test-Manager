@@ -73,6 +73,16 @@ def init_db(storage: Path) -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_remote_nodes_node_id ON remote_nodes(node_id);
             CREATE INDEX IF NOT EXISTS idx_remote_nodes_token ON remote_nodes(token);
+
+            CREATE TABLE IF NOT EXISTS voice_webhook_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                raw_payload TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_webhook_idem
+                ON voice_webhook_events(provider, idempotency_key);
         """)
         conn.commit()
         # Migrate existing DBs: add probe_id if missing
@@ -665,3 +675,53 @@ def delete_remote_node(storage: Path, node_id: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+# --- Voice / SIP webhook idempotency (append-only) ---
+
+
+def voice_webhook_try_insert(storage: Path, provider: str, idempotency_key: str, raw_payload: str) -> bool:
+    """
+    Insert one webhook event. Returns True if this is the first time for (provider, idempotency_key),
+    False if duplicate (INSERT OR IGNORE had no effect).
+    """
+    init_db(storage)
+    conn = _get_conn(storage)
+    try:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO voice_webhook_events (provider, idempotency_key, raw_payload)
+            VALUES (?, ?, ?)
+            """,
+            (provider.strip()[:64], idempotency_key[:512], raw_payload),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def voice_webhook_list_recent(storage: Path, limit: int = 50) -> list[dict[str, Any]]:
+    """Recent voice webhook rows (newest first), for admin/debug."""
+    init_db(storage)
+    conn = _get_conn(storage)
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, provider, idempotency_key, length(raw_payload), created_at
+            FROM voice_webhook_events ORDER BY id DESC LIMIT ?
+            """,
+            (max(1, min(limit, 200)),),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "id": r[0],
+            "provider": r[1] or "",
+            "idempotency_key": r[2] or "",
+            "payload_bytes": r[3],
+            "created_at": r[4] or "",
+        }
+        for r in rows
+    ]

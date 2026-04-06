@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bandwidth Test Manager - Web API and UI (FastAPI + Uvicorn)."""
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -14,6 +15,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import db
+from voice_domain import get_domain_schema
+from voice_provider_adapter import get_default_adapter
+
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -132,6 +136,7 @@ def get_config() -> dict:
         "last_sla_alert_at": None,
         "retention_days": None,
         "auth_users": [],
+        "voice_webhook_secret": "",
     }
     if not CONFIG_PATH.exists():
         return defaults
@@ -1626,6 +1631,71 @@ def api_clear_old_data(days: Optional[int] = None, _user: tuple[str, str] = Depe
         })
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+def _voice_webhook_secret() -> str:
+    return (os.environ.get("VOICE_WEBHOOK_SECRET") or "").strip() or (get_config().get("voice_webhook_secret") or "").strip()
+
+
+def _verify_voice_webhook_signature(body: bytes, sig_header: Optional[str]) -> bool:
+    """HMAC-SHA256 hex of raw body; header X-Voice-Webhook-Signature or sha256=<hex>. Empty secret = skip verify (dev)."""
+    secret = _voice_webhook_secret()
+    if not secret:
+        return True
+    if not sig_header:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    s = (sig_header or "").strip()
+    if s.lower().startswith("sha256="):
+        s = s[7:]
+    try:
+        return hmac.compare_digest(expected.lower(), s.lower())
+    except Exception:
+        return False
+
+
+@app.get("/api/voice/schema")
+def api_voice_schema(_user: tuple[str, str] = Depends(get_current_user)):
+    """Domain model reference: bounded contexts, entities, state machines, carrier notes (no secrets)."""
+    return JSONResponse(get_domain_schema())
+
+
+@app.get("/api/voice/webhooks/recent")
+def api_voice_webhooks_recent(_user: tuple[str, str] = Depends(require_admin)):
+    """Recent inbound voice webhook rows (idempotency log)."""
+    try:
+        db.init_db(STORAGE)
+        return JSONResponse({"events": db.voice_webhook_list_recent(STORAGE)})
+    except Exception as e:
+        return JSONResponse({"error": str(e), "events": []}, status_code=500)
+
+
+@app.post("/api/voice/webhooks/{provider}")
+async def api_voice_webhook(provider: str, request: Request):
+    """
+    Carrier webhook ingress: optional HMAC-SHA256 signature (X-Voice-Webhook-Signature),
+    idempotency via X-Idempotency-Key or body hash. No Basic auth — restrict by network in production.
+    """
+    body = await request.body()
+    sig = request.headers.get("X-Voice-Webhook-Signature") or request.headers.get("X-Signature")
+    if not _verify_voice_webhook_signature(body, sig):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    idem = (request.headers.get("X-Idempotency-Key") or request.headers.get("Idempotency-Key") or "").strip()
+    if not idem:
+        idem = hashlib.sha256(body).hexdigest()
+
+    prov = (provider or "unknown").strip().lower()[:64]
+    db.init_db(STORAGE)
+    raw = body.decode("utf-8", errors="replace")
+    is_new = db.voice_webhook_try_insert(STORAGE, prov, idem, raw)
+    if not is_new:
+        return JSONResponse({"ok": True, "duplicate": True, "idempotency_key": idem})
+
+    hdrs = {k: v for k, v in request.headers.items() if k.lower().startswith("x-") or k.lower() in ("content-type",)}
+    adapter = get_default_adapter()
+    result = adapter.handle_webhook(prov, raw, hdrs)
+    return JSONResponse({"ok": True, "duplicate": False, "idempotency_key": idem, "result": result})
 
 
 @app.post("/api/install-deps")
