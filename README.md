@@ -10,12 +10,18 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
 
 ## Quick start (Linux)
 
-1. **One-shot install** (deps + scripts + config + web UI). If you run `install.sh` without a full project tree beside it, the script fetches the project automatically—by default a **source tarball** (no `git` required). Optionally use **`BWM_SOURCE=git`** to **`git clone`** instead (installs `git` via the OS package manager if missing). See **Source: archive vs git** below. Set `BWM_DEBUG=1` for verbose fetch errors.
+1. **One-shot install or update** (deps + scripts + config + web UI). Re-running the same command **upgrades** an existing server: it fetches the latest **`main`**, rebuilds the UI (unless `SKIP_NPM_BUILD=1`), refreshes `/opt/netperf-web`, and keeps an existing `/etc/netperf/config.json`. Without a full project tree beside `install.sh`, the script downloads sources—by default a **source tarball** (no `git` required). Optionally use **`BWM_SOURCE=git`** to **`git clone`** instead (installs `git` via the OS package manager if missing). See **Source: archive vs git** below. Set `BWM_DEBUG=1` for verbose fetch errors.
 
-   **Copy-paste install (this repository):**
+   **Copy-paste (install or update — same URL):**
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh | sudo bash
+   ```
+
+   After an update, restart the web service if it does not reload by itself:
+
+   ```bash
+   sudo systemctl restart netperf-web
    ```
 
    The default branch for this repo is **`main`**. The full install includes the web UI (FastAPI + built static assets under `/opt/netperf-web`).
@@ -55,7 +61,7 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
 
    | What | URL |
    |------|-----|
-   | **One-line install (pipe to bash)** | `https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh` |
+   | **One-line install or update** (pipe to `sudo bash`) | `https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh` |
    | **Repository (browser)** | [github.com/theorem6/Bandwidth-Test-Manager](https://github.com/theorem6/Bandwidth-Test-Manager) |
 
    **Smoke-test the web UI** after install (Uvicorn only, no nginx): open **`http://<server>:8080/`** (root). Assets load from **`/static/assets/…`**. Behind nginx, proxy **`/static/`** as well as **`/netperf/`** (see `web/nginx-netperf-path.conf`).

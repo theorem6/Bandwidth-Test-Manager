@@ -14,10 +14,11 @@
 
 ## Install
 
-**One-line install (no clone; downloads source if needed):** as root, pipe the raw `install.sh` from the repo into bash. Example for the public GitHub `main` branch:
+**One-line install or update** (no local clone required; downloads source if needed): as root, pipe the raw `install.sh` for **`main`** into bash. Use the **same command** to **upgrade** an existing installation (refreshes `/opt/netperf-web`; keeps `/etc/netperf/config.json` if present).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh | sudo bash
+sudo systemctl restart netperf-web
 ```
 
 - Without a complete tree beside `install.sh`, the script fetches sources: **`BWM_SOURCE=archive`** (default) downloads a **GitHub-style tarball** (`BWM_REPO` = HTTPS web root, `BWM_REF` = **branch name** only); **`BWM_SOURCE=git`** runs **`git clone`** (`BWM_REPO` = clone URL, `BWM_REF` = branch, tag, or commit). Git is installed via the OS package manager if missing. Set `BWM_DEBUG=1` for verbose errors.
