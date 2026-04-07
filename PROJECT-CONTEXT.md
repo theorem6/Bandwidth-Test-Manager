@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/mai
 
 - The script may fetch a source archive automatically (`BWM_REPO` / `BWM_REF`, default branch `main`). Set `BWM_DEBUG=1` for verbose download errors.
 - **Private GitLab:** use `pack-release.sh` to produce `dist/*.tar.gz`, and `private-download-install.sh` on the server with `GITLAB_TOKEN` (or `BWM_TARBALL_URL`). See README **Private GitLab / offline bundle**.
-- **Web UI asset paths:** Vite `base` is `/netperf/static/`; middleware rewrites those requests to `/static/` (single mount). Test direct Uvicorn at `http://<host>:8080/`; use the Site URL behind nginx.
+- **Web UI asset paths:** Vite `base` is `/netperf/static/`; FastAPI exposes an explicit route for `/netperf/static/{path}` plus `/static/` mount. Test direct Uvicorn at `http://<host>:8080/`; use the Site URL behind nginx.
 - After install, open the web UI and use **Setup → Site branding** (admin) to white-label the app without editing JSON by hand.
 
 **On the server (as root), from a full clone:**

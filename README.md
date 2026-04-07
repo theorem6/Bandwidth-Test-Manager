@@ -74,7 +74,7 @@ The UI is built with **Svelte**, **TypeScript**, and **Vite**. Before deploying 
 cd web/frontend && npm install && npm run build
 ```
 
-This writes the app into `web/static/`. The FastAPI backend serves files under `/static/`; HTTP middleware rewrites `/netperf/static/…` to `/static/…` so Vite’s `base` path works behind Uvicorn or nginx.
+This writes the app into `web/static/`. The FastAPI backend serves `/static/…` and explicitly serves the same files under `/netperf/static/…` (Vite `base`) so assets load on Uvicorn or behind nginx.
 
 ## Private GitLab / offline bundle
 

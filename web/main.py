@@ -93,16 +93,6 @@ CONFIG_PATH = Path(os.environ.get("NETPERF_CONFIG", "/etc/netperf/config.json"))
 app = FastAPI(title="Bandwidth Test Manager", docs_url=None, redoc_url=None)
 
 
-@app.middleware("http")
-async def rewrite_netperf_static_prefix(request: Request, call_next):
-    """Vite uses base /netperf/static/; only /static is mounted. Rewrite before routing."""
-    if request.scope.get("type") == "http":
-        path = request.scope.get("path") or ""
-        if path.startswith("/netperf/static"):
-            request.scope["path"] = "/static" + path[len("/netperf/static") :]
-    return await call_next(request)
-
-
 class NoCacheStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: Any) -> Any:
         response = await super().get_response(path, scope)
@@ -113,9 +103,39 @@ class NoCacheStaticFiles(StaticFiles):
 
 
 static_dir = APP_DIR / "static"
+
+
+def _safe_file_under_dir(root: Path, relative: str) -> Path | None:
+    """Return resolved file path if it exists under root (no path traversal)."""
+    if not relative or ".." in Path(relative).parts:
+        return None
+    try:
+        full = (root / relative).resolve()
+        full.relative_to(root.resolve())
+    except ValueError:
+        return None
+    return full if full.is_file() else None
+
+
+@app.get("/netperf/static/{filepath:path}")
+async def serve_netperf_prefixed_static(filepath: str):
+    """Vite base is /netperf/static/ — explicit route so assets always resolve (Uvicorn + nginx)."""
+    if not static_dir.is_dir():
+        raise HTTPException(status_code=404, detail="static dir missing")
+    full = _safe_file_under_dir(static_dir, filepath)
+    if full is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(
+        str(full),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
+
+
 if static_dir.exists():
     (static_dir / "uploads").mkdir(parents=True, exist_ok=True)
-    # Vite base is /netperf/static/; middleware rewrites to /static (single mount works everywhere).
     app.mount("/static", NoCacheStaticFiles(directory=str(static_dir)), name="static")
 
 _BRANDING_KEYS = (
