@@ -92,6 +92,8 @@ def require_admin(user: tuple[str, str] = Depends(get_current_user)) -> tuple[st
 APP_DIR = Path(__file__).resolve().parent
 STORAGE = Path(os.environ.get("NETPERF_STORAGE", "/var/log/netperf"))
 CONFIG_PATH = Path(os.environ.get("NETPERF_CONFIG", "/etc/netperf/config.json"))
+# Ookla CLI: required for non-interactive use (systemd/cron); interactive shells often work without.
+_OOKLA_NONINTERACTIVE = ("--accept-license", "--accept-gdpr")
 
 # UI allows only these (see web/frontend/src/lib/schedule.ts)
 _ALLOWED_CRON_SCHEDULES = frozenset({"5 * * * *", "5 6 * * *", "5 */6 * * *"})
@@ -973,7 +975,7 @@ def api_speedtest_servers(
 
     try:
         # Try JSON first (some Ookla builds crash with -f json: "basic_string::_M_construct null not valid")
-        out, err, code = _run_speedtest_list([speedtest_bin, "-L", "-f", "json"], env)
+        out, err, code = _run_speedtest_list([speedtest_bin, *_OOKLA_NONINTERACTIVE, "-L", "-f", "json"], env)
         if out:
             servers = _parse_speedtest_servers_json(out)
         if not out or (code != 0 and not servers):
@@ -984,7 +986,7 @@ def api_speedtest_servers(
     # Fallback 1: plain text with same binary (no -f json)
     if not servers:
         try:
-            out, err, _ = _run_speedtest_list([speedtest_bin, "-L"], env)
+            out, err, _ = _run_speedtest_list([speedtest_bin, *_OOKLA_NONINTERACTIVE, "-L"], env)
             if out:
                 servers = _parse_speedtest_servers_text(out)
                 if servers and error_note:
@@ -1000,7 +1002,7 @@ def api_speedtest_servers(
     # Fallback 2: if we still have no servers and default was "speedtest", try official binary
     if not servers and speedtest_bin == "speedtest" and Path("/usr/local/bin/speedtest").exists():
         try:
-            out, err, _ = _run_speedtest_list(["/usr/local/bin/speedtest", "-L"], env)
+            out, err, _ = _run_speedtest_list(["/usr/local/bin/speedtest", *_OOKLA_NONINTERACTIVE, "-L"], env)
             if out:
                 servers = _parse_speedtest_servers_text(out)
                 error_note = "Server list from text (JSON list failed on this Speedtest build)." if error_note else None
@@ -1425,7 +1427,7 @@ IPERF_HOST="${IPERF_HOST:-}"
 
 payload_speedtest() {
   local out
-  out=$(speedtest -f json 2>/dev/null) || return 0
+  out=$(speedtest --accept-license --accept-gdpr -f json 2>/dev/null) || return 0
   local down_b=$(echo "$out" | grep -o '"download":{[^}]*"bandwidth":[0-9]*' | grep -o '[0-9]*$' | head -1)
   local up_b=$(echo "$out" | grep -o '"upload":{[^}]*"bandwidth":[0-9]*' | grep -o '[0-9]*$' | head -1)
   local lat=$(echo "$out" | grep -o '"latency":[0-9.]*' | head -1 | grep -o '[0-9.]*$')
