@@ -2,6 +2,8 @@
 
 Linux-based speedtest utility using **Ookla Speedtest CLI** and **iperf3**, with configurable sites, optional scheduling, CSV reporting, and a **web UI** with per-site and master graphs. **Outgoing only:** the app runs tests from this server to external speedtest/iperf servers; it does not host a speedtest or iperf server for others.
 
+**Install targets:** `install.sh` supports **Debian/Ubuntu**, **Fedora / RHEL / Rocky / Alma / Oracle Linux / Amazon Linux** (dnf/yum), **openSUSE / SLES**, **Alpine**, and **Arch** via `scripts/linux-deps.sh`. Other systems need manual packages (see that file). **systemd** is optional: without it, the web UI prints a manual `uvicorn` command.
+
 See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and usage. For turning this into a vital **ISP tool** (SLAs, alerting, multi-probe, reports), see **[docs/ISP-ROADMAP.md](docs/ISP-ROADMAP.md)**.
 
 ## Quick start (Linux)

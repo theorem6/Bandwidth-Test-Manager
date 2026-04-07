@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/mai
 sudo ./install.sh
 ```
 
-- Installs deps (Ookla repo, speedtest, iperf3, mtr, jq, trickle), copies scripts to `/bin`, creates `/etc/netperf/config.json` from `etc/netperf-config.json`, and installs the web UI under `/opt/netperf-web` with a systemd service.
+- Installs OS packages via `scripts/linux-deps.sh` (Debian/Ubuntu, Fedora/RHEL family, SUSE, Alpine, Arch), Ookla Speedtest CLI, iperf3, mtr, jq; optional trickle on Debian; copies scripts to `/bin`, creates `/etc/netperf/config.json` from `etc/netperf-config.json`, and installs the web UI under `/opt/netperf-web` (enables **systemd** when present).
 - Use `sudo ./install.sh --no-web` to skip the web interface.
 - Web port is configurable: set `PORT=8081` (or other) before running to use a different port (e.g. if 8080 is in use).
 
