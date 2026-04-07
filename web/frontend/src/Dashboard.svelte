@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { Chart } from 'chart.js';
   import zoomPlugin from 'chartjs-plugin-zoom';
-  import { getDates, getData, getHealth, getBase, getRunStatus, getHistory, authHeaders, getExportCsvBlob, getSummaryCsvBlob } from './lib/api';
+  import { getDates, getData, getHealth, getBase, getRunStatus, getHistory, getExportCsvBlob, getSummaryCsvBlob, runTestNow } from './lib/api';
 
   Chart.register(zoomPlugin);
   import { formatValue, formatDate, formatDateShort, formatDateTimeShort } from './lib/format';
@@ -571,55 +571,52 @@
     }
   }
 
-  function triggerRunNowFireAndForget() {
-    const base = getBase();
-    const url = base + '/api/run-now';
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 3000);
-    fetch(url, { method: 'POST', headers: authHeaders(), signal: ctrl.signal })
-      .catch(() => {})
-      .finally(() => clearTimeout(t));
-  }
-
-  function handleRunNow() {
+  async function handleRunNow() {
     if (runNowLoading) return;
     runNowLoading = true;
     stopRunNowPoll();
-    setTimeout(() => {
-      triggerRunNowFireAndForget();
-      let seenRunning = false;
-      let pollCount = 0;
-      const maxPolls = 90;
-      runNowPollId = setInterval(async () => {
-        pollCount += 1;
-        try {
-          const st = await getRunStatus();
-          if (st.running) seenRunning = true;
-          if (seenRunning && !st.running) {
-            stopRunNowPoll();
-            runNowLoading = false;
-            onToast('Test finished. Refreshing data.');
-            (async () => {
-              const latestDates = await loadDatesList();
-              if (latestDates.length) selectedDate = latestDates[0];
-              await loadData();
-              loadHistory();
-            })();
-            return;
-          }
-          if (pollCount >= maxPolls) {
-            stopRunNowPoll();
-            runNowLoading = false;
-            onToast(seenRunning ? 'Stopped polling.' : 'Run may not have started. Check Setup.', seenRunning ? 'success' : 'error');
-          }
-        } catch {
-          if (pollCount >= maxPolls) {
-            stopRunNowPoll();
-            runNowLoading = false;
-          }
+    try {
+      const r = await runTestNow();
+      if (!r.ok) {
+        onToast(r.error || 'Run test now failed.', 'error');
+        runNowLoading = false;
+        return;
+      }
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : 'Run test now failed (login as admin, or check server logs).', 'error');
+      runNowLoading = false;
+      return;
+    }
+    let seenRunning = false;
+    let pollCount = 0;
+    const maxPolls = 90;
+    runNowPollId = setInterval(async () => {
+      pollCount += 1;
+      try {
+        const st = await getRunStatus();
+        if (st.running) seenRunning = true;
+        if (seenRunning && !st.running) {
+          stopRunNowPoll();
+          runNowLoading = false;
+          onToast('Test finished. Refreshing data.');
+          const latestDates = await loadDatesList();
+          if (latestDates.length) selectedDate = latestDates[0];
+          await loadData();
+          loadHistory();
+          return;
         }
-      }, 2000);
-    }, 0);
+        if (pollCount >= maxPolls) {
+          stopRunNowPoll();
+          runNowLoading = false;
+          onToast(seenRunning ? 'Stopped polling.' : 'Run did not report progress. Check /var/log/netperf/run-now-last.log on the server (sudo / scripts).', seenRunning ? 'success' : 'error');
+        }
+      } catch {
+        if (pollCount >= maxPolls) {
+          stopRunNowPoll();
+          runNowLoading = false;
+        }
+      }
+    }, 2000);
   }
 
   /** Include probeId so node dashboard refetches when switching nodes; loadData reads probeId inside. */

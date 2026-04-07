@@ -237,6 +237,8 @@ EOF
 		systemctl start netperf-web.service 2>/dev/null || true
 		echo "Web UI at $WEB_DIR, http://0.0.0.0:$WEB_PORT"
 		echo "  systemctl start|stop|status netperf-web"
+		echo ""
+		echo "If netperf-web.service uses User= (not root), configure passwordless sudo for /bin/netperf-cron-run and /bin/netperf-tester so Dashboard → Run test now works."
 	else
 		echo "systemd not detected. Start manually:"
 		echo "  cd $WEB_DIR && NETPERF_STORAGE=/var/log/netperf NETPERF_CONFIG=/etc/netperf/config.json PORT=$WEB_PORT ./venv/bin/uvicorn main:app --host 0.0.0.0 --port $WEB_PORT"

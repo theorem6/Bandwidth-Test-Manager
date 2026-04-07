@@ -1116,29 +1116,69 @@ def _run_now_cmd() -> list:
     return run_args
 
 
+def _sudo_noninteractive_works() -> bool:
+    """True if sudo -n can run commands (required for Run test now when uvicorn is not root)."""
+    if os.geteuid() == 0:
+        return True
+    try:
+        r = subprocess.run(
+            ["sudo", "-n", "true"],
+            capture_output=True,
+            timeout=10,
+            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
 @app.post("/api/run-now")
 def api_run_now(_user: tuple[str, str] = Depends(require_admin)):
     """Start speedtest + iperf in background. Returns immediately; client should poll GET /api/run-status. Uses sudo when app is not root so tests actually run."""
     cmd = _run_now_cmd()
     if not cmd:
         return JSONResponse({"ok": False, "error": "netperf scripts not found. Use Setup to install dependencies."})
+    if os.geteuid() != 0 and cmd[0] == "sudo" and not _sudo_noninteractive_works():
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": (
+                    "Run test now needs passwordless sudo for the service user. "
+                    "Add to /etc/sudoers.d/ (use visudo): "
+                    "'<web_user> ALL=(root) NOPASSWD: /bin/netperf-cron-run, /bin/netperf-tester' "
+                    "or run the web service as root. See /var/log/netperf/run-now-last.log after a failed attempt."
+                ),
+            },
+            status_code=503,
+        )
     STORAGE.mkdir(parents=True, exist_ok=True)
+    run_now_log = STORAGE / "run-now-last.log"
     RUN_NOW_SENTINEL.touch()
     import threading
     def run():
         try:
-            subprocess.run(
+            r = subprocess.run(
                 cmd,
                 capture_output=True,
                 timeout=600,
                 cwd="/",
                 env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
             )
+            try:
+                run_now_log.write_text(
+                    f"cmd={cmd!r}\nreturncode={r.returncode}\nstdout={r.stdout or ''}\nstderr={r.stderr or ''}\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
             today = datetime.utcnow().strftime("%Y%m%d")
             _import_day_from_files(today)
             _evaluate_sla_and_webhook()
-        except Exception:
-            pass
+        except Exception as ex:
+            try:
+                run_now_log.write_text(f"cmd={cmd!r}\nexception={ex!r}\n", encoding="utf-8")
+            except OSError:
+                pass
         finally:
             RUN_NOW_SENTINEL.unlink(missing_ok=True)
     t = threading.Thread(target=run, daemon=True)
