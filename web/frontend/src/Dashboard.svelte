@@ -705,6 +705,11 @@
       {#if selectedDate && hasAnyData && connected}
         <p class="small text-muted mb-0 mt-1">For hourly tests, start the <strong>Scheduler</strong> (Scheduler page).</p>
       {/if}
+      {#if selectedDate && connected && speedtestSitesBeforeTimeFilter.length === 0 && iperfSitesBeforeTimeFilter.length > 0}
+        <p class="small text-warning mb-0 mt-2" role="status">
+          iperf3 has data for this day but Speedtest does not. Add at least one row under <strong>Settings → Speedtest (Ookla)</strong> (e.g. Local or Auto), confirm the Ookla CLI is installed, then run tests again. New installs also run one Auto Speedtest when that list is empty.
+        </p>
+      {/if}
       {#if datesError}
         <p class="small text-danger mb-0 mt-2">{datesError}</p>
       {:else if !datesLoading && dates.length === 0 && connected}

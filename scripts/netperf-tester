@@ -57,31 +57,38 @@ START() {
 		fi
 	fi
 
-	# Ookla Speedtest: run each server from config
-	idx=0
-	while true; do
-		id=$(jq -r --argjson i "$idx" '.ookla_servers[$i].id // empty' "$CONFIG_FILE")
-		label=$(jq -r --argjson i "$idx" '.ookla_servers[$i].label // empty' "$CONFIG_FILE")
-		[ -z "$id" ] && break
-		outfile="$STORAGE_LOCATION/${idx}_speedtest-$(echo "$label" | tr '[:upper:]' '[:lower:]')"
-		if [ "$id" = "auto" ]; then
-			$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
-		elif [ "$id" = "local" ]; then
-			RESOLVED=""
-			if command -v netperf-resolve-ookla-local >/dev/null 2>&1; then
-				RESOLVED=$(netperf-resolve-ookla-local "$CONFIG_FILE" 2>/dev/null || true)
-			fi
-			if [ -n "$RESOLVED" ]; then
-				$SPEEDTEST_CMD -s "$RESOLVED" -f json >> "$outfile" 2>/dev/null || true
-			else
+	# Ookla Speedtest: run each server from config. If ookla_servers is empty, run one Auto test
+	# so scheduled runs still produce Speedtest data when only iperf is explicitly configured.
+	OOKLA_N=$(jq '.ookla_servers // [] | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
+	if [ "${OOKLA_N:-0}" -eq 0 ]; then
+		outfile="$STORAGE_LOCATION/0_speedtest-auto"
+		$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+	else
+		idx=0
+		while true; do
+			id=$(jq -r --argjson i "$idx" '.ookla_servers[$i].id // empty' "$CONFIG_FILE")
+			label=$(jq -r --argjson i "$idx" '.ookla_servers[$i].label // empty' "$CONFIG_FILE")
+			[ -z "$id" ] && break
+			outfile="$STORAGE_LOCATION/${idx}_speedtest-$(echo "$label" | tr '[:upper:]' '[:lower:]')"
+			if [ "$id" = "auto" ]; then
 				$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+			elif [ "$id" = "local" ]; then
+				RESOLVED=""
+				if command -v netperf-resolve-ookla-local >/dev/null 2>&1; then
+					RESOLVED=$(netperf-resolve-ookla-local "$CONFIG_FILE" 2>/dev/null || true)
+				fi
+				if [ -n "$RESOLVED" ]; then
+					$SPEEDTEST_CMD -s "$RESOLVED" -f json >> "$outfile" 2>/dev/null || true
+				else
+					$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+				fi
+			else
+				$SPEEDTEST_CMD -s "$id" -f json >> "$outfile" 2>/dev/null || true
 			fi
-		else
-			$SPEEDTEST_CMD -s "$id" -f json >> "$outfile" 2>/dev/null || true
-		fi
-		sleep 10
-		idx=$((idx + 1))
-	done
+			sleep 10
+			idx=$((idx + 1))
+		done
+	fi
 
 	# iperf3: run each server × each test from config (duration from config, default 10s)
 	IPERF_DURATION=$(jq -r '.iperf_duration_seconds // 10' "$CONFIG_FILE")

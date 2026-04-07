@@ -382,7 +382,7 @@ def _import_day_from_files(log_date: str) -> None:
     db.init_db(STORAGE)
     cfg = get_config()
     probe_id = (cfg.get("probe_id") or "").strip() or None
-    for f in sorted(day_dir.glob("[0-9]_speedtest-*")):
+    for f in sorted(day_dir.glob("*_speedtest-*")):
         label = site_label_from_speedtest_filename(f.name)
         points = parse_speedtest_file(f)
         if points:
