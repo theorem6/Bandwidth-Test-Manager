@@ -164,9 +164,6 @@ fi
 echo "=== Installing OS packages (Ookla, iperf3, jq, mtr, …) ==="
 bwm_install_all_cli_dependencies
 
-echo "=== Accepting Ookla license ==="
-speedtest --accept-license --accept-gdpr || true
-
 echo "=== Installing scripts to /bin ==="
 cp -f scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter scripts/netperf-cron-run scripts/netperf-resolve-ookla-local /bin/
 chmod 755 /bin/netperf-scheduler /bin/netperf-tester /bin/netperf-reporter /bin/netperf-cron-run /bin/netperf-resolve-ookla-local

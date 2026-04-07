@@ -72,13 +72,13 @@ START() {
 
 	# Ookla Speedtest: run each server from config. If ookla_servers is empty, run one Auto test
 	# so scheduled runs still produce Speedtest data when only iperf is explicitly configured.
-	# --accept-license --accept-gdpr: required for non-interactive/cron runs (TTY sessions may work without).
+	# Errors (e.g. missing binary) go to speedtest.stderr.log — install links /usr/local/bin/speedtest.
 	STERR="$STORAGE_LOCATION/speedtest.stderr.log"
 	if [ -n "$SPEEDTEST_BIN" ]; then
 		OOKLA_N=$(jq '.ookla_servers // [] | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
 		if [ "${OOKLA_N:-0}" -eq 0 ]; then
 			outfile="$STORAGE_LOCATION/0_speedtest-auto"
-			$SPEEDTEST_CMD --accept-license --accept-gdpr -f json >> "$outfile" 2>> "$STERR" || true
+			$SPEEDTEST_CMD -f json >> "$outfile" 2>> "$STERR" || true
 		else
 			idx=0
 			while true; do
@@ -87,19 +87,19 @@ START() {
 				[ -z "$id" ] && break
 				outfile="$STORAGE_LOCATION/${idx}_speedtest-$(echo "$label" | tr '[:upper:]' '[:lower:]')"
 				if [ "$id" = "auto" ]; then
-					$SPEEDTEST_CMD --accept-license --accept-gdpr -f json >> "$outfile" 2>> "$STERR" || true
+					$SPEEDTEST_CMD -f json >> "$outfile" 2>> "$STERR" || true
 				elif [ "$id" = "local" ]; then
 					RESOLVED=""
 					if command -v netperf-resolve-ookla-local >/dev/null 2>&1; then
 						RESOLVED=$(netperf-resolve-ookla-local "$CONFIG_FILE" 2>/dev/null || true)
 					fi
 					if [ -n "$RESOLVED" ]; then
-						$SPEEDTEST_CMD --accept-license --accept-gdpr -s "$RESOLVED" -f json >> "$outfile" 2>> "$STERR" || true
+						$SPEEDTEST_CMD -s "$RESOLVED" -f json >> "$outfile" 2>> "$STERR" || true
 					else
-						$SPEEDTEST_CMD --accept-license --accept-gdpr -f json >> "$outfile" 2>> "$STERR" || true
+						$SPEEDTEST_CMD -f json >> "$outfile" 2>> "$STERR" || true
 					fi
 				else
-					$SPEEDTEST_CMD --accept-license --accept-gdpr -s "$id" -f json >> "$outfile" 2>> "$STERR" || true
+					$SPEEDTEST_CMD -s "$id" -f json >> "$outfile" 2>> "$STERR" || true
 				fi
 				sleep 10
 				idx=$((idx + 1))

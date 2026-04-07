@@ -32,7 +32,7 @@ IPERF_HOST="${IPERF_HOST:-}"
 
 payload_speedtest() {
   local out
-  out=$(speedtest --accept-license --accept-gdpr -f json 2>/dev/null) || return 0
+  out=$(speedtest -f json 2>/dev/null) || return 0
   local down_b=$(echo "$out" | grep -o '"download":{[^}]*"bandwidth":[0-9]*' | grep -o '[0-9]*$' | head -1)
   local up_b=$(echo "$out" | grep -o '"upload":{[^}]*"bandwidth":[0-9]*' | grep -o '[0-9]*$' | head -1)
   local lat=$(echo "$out" | grep -o '"latency":[0-9.]*' | head -1 | grep -o '[0-9.]*$')

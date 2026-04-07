@@ -707,7 +707,7 @@
       {/if}
       {#if selectedDate && connected && speedtestSitesBeforeTimeFilter.length === 0 && iperfSitesBeforeTimeFilter.length > 0}
         <p class="small text-warning mb-0 mt-2" role="status">
-          iperf3 has data for this day but Speedtest does not. Redeploy <code class="small">/bin/netperf-tester</code> (uses <code class="small">--accept-license --accept-gdpr</code> for cron). Check <code class="small">/var/log/netperf/&lt;date&gt;/speedtest.stderr.log</code> on the server for Ookla errors. Ensure <strong>Settings → Speedtest</strong> lists the servers you want; PATH/cron issues are handled in the current script.
+          iperf3 has data for this day but Speedtest does not. Re-run <strong>install</strong> or <strong>Setup → Install dependencies</strong> so <code class="small">/usr/local/bin/speedtest</code> exists (install links it when the package only provides <code class="small">/usr/bin/speedtest</code>). Redeploy <code class="small">/bin/netperf-tester</code>, then check <code class="small">/var/log/netperf/&lt;date&gt;/speedtest.stderr.log</code> if it persists.
         </p>
       {/if}
       {#if datesError}

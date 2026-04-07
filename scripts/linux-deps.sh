@@ -155,6 +155,26 @@ bwm_detect_family() {
 	echo unknown
 }
 
+# Cron and non-login shells often have PATH=/usr/bin:/bin. Package installs may put Ookla only in
+# /usr/bin while our scripts prefer /usr/local/bin/speedtest (official tarball). Ensure a stable path.
+bwm_ensure_ookla_speedtest_symlink() {
+	mkdir -p /usr/local/bin
+	if [ -x /usr/local/bin/speedtest ]; then
+		return 0
+	fi
+	local found
+	found=$(command -v speedtest 2>/dev/null) || return 0
+	if [ -z "$found" ] || [ "$found" = "/usr/local/bin/speedtest" ]; then
+		return 0
+	fi
+	local real
+	real=$(readlink -f "$found" 2>/dev/null) || real="$found"
+	if [ -x "$real" ]; then
+		ln -sf "$real" /usr/local/bin/speedtest
+		echo "=== Linked /usr/local/bin/speedtest -> $real (stable path for cron and the web app) ==="
+	fi
+}
+
 # Main entry: CLI tools (speedtest, iperf3, jq, mtr, curl, tar)
 bwm_install_all_cli_dependencies() {
 	local fam mgr
@@ -198,6 +218,8 @@ bwm_install_all_cli_dependencies() {
 			esac
 			;;
 	esac
+
+	bwm_ensure_ookla_speedtest_symlink
 
 	command -v speedtest &>/dev/null || {
 		echo "speedtest CLI not available after install." >&2

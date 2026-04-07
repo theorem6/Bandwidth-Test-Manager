@@ -19,9 +19,6 @@ fi
 echo "=== Installing OS packages ==="
 bwm_install_all_cli_dependencies
 
-echo "=== Accepting Ookla license ==="
-speedtest --accept-license --accept-gdpr 2>/dev/null || true
-
 echo "=== Installing netperf scripts to /bin ==="
 if [ -n "$SCRIPTS_SRC" ]; then
 	for f in netperf-scheduler netperf-tester netperf-reporter netperf-cron-run netperf-resolve-ookla-local; do
