@@ -19,8 +19,9 @@
   let sslKeyPath = '';
   let limitMbps = '';
   let cronSchedule = '5 * * * *';
-  /** Narrows the Ookla server dropdown when many servers are loaded */
-  let ooklaListFilter = '';
+  /** Ookla server search: input vs applied query (Search button / Enter applies). */
+  let ooklaSearchInput = '';
+  let ooklaSearchQuery = '';
   let iperfDurationSeconds = 10;
   let ooklaServers: { id: string; label: string }[] = [];
   let iperfServers: { host: string; label: string }[] = [];
@@ -153,11 +154,23 @@
       const r = await getSpeedtestServers();
       ooklaServerOptions = r.servers || [];
       if (r.error) ooklaOptionsError = r.error;
+      ooklaSearchQuery = ooklaSearchInput.trim();
     } catch (e) {
       ooklaServerOptions = [];
       ooklaOptionsError = e instanceof Error ? e.message : 'Failed to load server list';
     } finally {
       ooklaOptionsLoading = false;
+    }
+  }
+
+  function applyOoklaSearch() {
+    ooklaSearchQuery = ooklaSearchInput.trim();
+  }
+
+  function onOoklaSearchKeydown(ev: KeyboardEvent) {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      applyOoklaSearch();
     }
   }
 
@@ -204,7 +217,7 @@
   }
 
   $: ooklaFiltered = (() => {
-    const q = ooklaListFilter.trim().toLowerCase();
+    const q = ooklaSearchQuery.toLowerCase();
     let arr = ooklaServerOptions;
     if (q) {
       arr = arr.filter((s) => {
@@ -216,9 +229,8 @@
   })();
 
   $: ooklaGrouped = groupOoklaByCountry(ooklaFiltered);
-  /** Large catalog: require typing to avoid rendering thousands of option nodes */
-  $: ooklaNeedsFilter =
-    ooklaServerOptions.length > 400 && ooklaListFilter.trim().length === 0;
+  /** Large catalog: require Search click so we do not render thousands of options */
+  $: ooklaNeedsFilter = ooklaServerOptions.length > 400 && ooklaSearchQuery.length === 0;
 
   function onOoklaServerSelect(i: number, value: string) {
     const opt = value === 'auto' || value === 'local' ? null : ooklaServerOptions.find((s) => String(s.id) === value);
@@ -537,19 +549,34 @@
     {/if}
     <div class="mb-2">
       <label class="form-label small" for="ookla-filter">Search servers</label>
-      <input
-        id="ookla-filter"
-        type="search"
-        class="form-control form-control-sm mb-1"
-        placeholder="City, country, provider, or server ID…"
-        bind:value={ooklaListFilter}
-        autocomplete="off"
-        disabled={ooklaOptionsLoading}
-      />
+      <div class="input-group input-group-sm mb-1" style="max-width: 36rem">
+        <input
+          id="ookla-filter"
+          type="search"
+          class="form-control"
+          placeholder="City, country, provider, or server ID…"
+          bind:value={ooklaSearchInput}
+          on:keydown={onOoklaSearchKeydown}
+          autocomplete="off"
+          disabled={ooklaOptionsLoading}
+        />
+        <button
+          type="button"
+          class="btn btn-primary"
+          on:click={applyOoklaSearch}
+          disabled={ooklaOptionsLoading}
+          title="Apply search to the dropdowns below"
+        >
+          Search
+        </button>
+      </div>
       <p class="form-text text-muted small mb-2">
         {#if ooklaServerOptions.length > 0}
-          Showing {ooklaFiltered.length} of {ooklaServerOptions.length} servers
-          {#if ooklaNeedsFilter}(type above to narrow){/if}.
+          {#if ooklaNeedsFilter}
+            Large list — enter a term above and click <strong>Search</strong> (or press Enter) to fill the dropdowns.
+          {:else}
+            Showing {ooklaFiltered.length} of {ooklaServerOptions.length} servers matching “{ooklaSearchQuery || '(all)'}”.
+          {/if}
         {:else}
           List loads from Ookla on this machine (and Speedtest.net when online).
         {/if}
@@ -564,7 +591,7 @@
             {:else if ooklaServerOptions.length > 0}
               {#if ooklaNeedsFilter}
                 <select class="form-select form-select-sm" disabled aria-disabled="true">
-                  <option>Type in the search box above to narrow the list…</option>
+                  <option>Enter a search above, then click Search…</option>
                 </select>
               {:else}
                 <select
