@@ -335,25 +335,29 @@
     if (uploadChartInst) { uploadChartInst.destroy(); uploadChartInst = null; }
     if (latencyChartInst) { latencyChartInst.destroy(); latencyChartInst = null; }
     if (iperfChartInst) { iperfChartInst.destroy(); iperfChartInst = null; }
-    if (downloadCanvas && hasSpeedtest) {
+    /* Derive from filtered data here — do not use $: hasSpeedtest/hasIperf; those can lag one tick behind
+     * raw speedtestData in Svelte’s reactive order, so charts were skipped while iperf sometimes still drew. */
+    const hasSt = Object.keys(filteredSpeedtestData).some((s) => (filteredSpeedtestData[s] || []).length > 0);
+    const hasIp = Object.keys(filteredIperfData).some((s) => (filteredIperfData[s] || []).length > 0);
+    if (downloadCanvas && hasSt) {
       const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'download_bps', extendToNow);
       if (labels.length && datasets.length) {
         downloadChartInst = renderChart(downloadCanvas, labels, datasets, 'download_bps', 'Download (Mbps)');
       }
     }
-    if (uploadCanvas && hasSpeedtest) {
+    if (uploadCanvas && hasSt) {
       const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'upload_bps', extendToNow);
       if (labels.length && datasets.length) {
         uploadChartInst = renderChart(uploadCanvas, labels, datasets, 'upload_bps', 'Upload (Mbps)');
       }
     }
-    if (latencyCanvas && hasSpeedtest) {
+    if (latencyCanvas && hasSt) {
       const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'latency_ms', extendToNow);
       if (labels.length && datasets.length) {
         latencyChartInst = renderChart(latencyCanvas, labels, datasets, 'latency_ms', 'Latency (ms)');
       }
     }
-    if (iperfCanvas && hasIperf) {
+    if (iperfCanvas && hasIp) {
       const { labels, datasets } = buildIperfOverTime(filteredIperfData, extendToNow);
       if (labels.length && datasets.length) {
         iperfChartInst = renderChart(iperfCanvas, labels, datasets, 'bits_per_sec', 'Throughput (Mbps)');
@@ -373,9 +377,13 @@
       });
     });
   }
-  /* Depend on data and time filter so charts refresh when data or range changes. */
-  $: dataVersion = { s: speedtestData, i: iperfData, range: timeRangeFilter, date: selectedDate };
-  $: if (selectedDate && dataVersion) void updateCharts();
+  /* Depend on filtered series + extendToNow so we run after filter reactives (avoids stale hasSpeedtest). */
+  $: if (selectedDate) {
+    filteredSpeedtestData;
+    filteredIperfData;
+    extendToNow;
+    void updateCharts();
+  }
 
   async function checkConnection() {
     connectionError = '';
