@@ -105,7 +105,9 @@ class NoCacheStaticFiles(StaticFiles):
 static_dir = APP_DIR / "static"
 if static_dir.exists():
     (static_dir / "uploads").mkdir(parents=True, exist_ok=True)
+    # Vite base is /netperf/static/ — nginx strips /netperf when proxying; direct Uvicorn needs both paths.
     app.mount("/static", NoCacheStaticFiles(directory=str(static_dir)), name="static")
+    app.mount("/netperf/static", NoCacheStaticFiles(directory=str(static_dir)), name="netperf_static")
 
 _BRANDING_KEYS = (
     "app_title",

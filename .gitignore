@@ -28,5 +28,8 @@ hsgeng@*
 # Deploy artifact (created by deploy scripts)
 deploy.tar.gz
 
+# pack-release.sh / pack-release.ps1 output
+dist/
+
 # Uploaded branding logos (Vite copies empty uploads/ from web/frontend/public/uploads/)
 web/static/uploads/*
