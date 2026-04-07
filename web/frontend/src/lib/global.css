@@ -133,7 +133,11 @@ body {
   box-shadow: var(--shadow-sm);
 }
 [data-theme="dark"] .navbar.bg-primary {
-  background: linear-gradient(90deg, #1a2332 0%, #1e3a4f 100%) !important;
+  background: linear-gradient(
+    90deg,
+    var(--navbar-bg-start, #1a2332) 0%,
+    var(--navbar-bg-end, #1e3a4f) 100%
+  ) !important;
   border-bottom-color: rgba(255, 255, 255, 0.08);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
 }
@@ -162,7 +166,7 @@ body {
   color: var(--color-text-primary) !important;
 }
 [data-theme="light"] .sidebar .nav-link.active {
-  background: rgba(8, 145, 178, 0.2) !important;
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent) !important;
   color: var(--color-primary) !important;
 }
 
@@ -181,7 +185,11 @@ body {
 
 .navbar .brand-title {
   font-weight: 700;
-  background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+  background: linear-gradient(
+    135deg,
+    var(--brand-gradient-start, #00f2fe) 0%,
+    var(--brand-gradient-end, #4facfe) 100%
+  );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

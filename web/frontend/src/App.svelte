@@ -10,6 +10,7 @@
   import { auth } from './lib/auth';
   import { loading } from './lib/stores';
   import { initTheme } from './lib/theme';
+  import { branding, loadBranding, effectiveLogo, effectiveTitle, effectiveTagline, effectiveLogoAlt } from './lib/branding';
 
   type View = 'dashboard' | 'scheduler' | 'settings' | 'setup' | 'nodes' | 'node';
   let currentView: View = 'dashboard';
@@ -28,6 +29,11 @@
   let scheduleBusy = false;
   $: loadingVal = $loading;
   $: user = $auth;
+  $: brand = $branding;
+  $: logoSrc = effectiveLogo(brand);
+  $: titleText = effectiveTitle(brand);
+  $: taglineText = effectiveTagline(brand);
+  $: logoAlt = effectiveLogoAlt(brand, titleText);
 
   function openNodeDashboard(id: string, name: string) {
     selectedNodeId = id;
@@ -103,6 +109,7 @@
 
   onMount(() => {
     initTheme();
+    loadBranding().catch(() => {});
     loadStatus();
     const id = setInterval(loadStatus, 30000);
     return () => clearInterval(id);
@@ -123,10 +130,12 @@
           <i class="bi bi-list" style="font-size:1.5rem"></i>
         </button>
         <a class="navbar-brand brand-wrap text-decoration-none d-flex align-items-center" href="/netperf/">
-          <img src="/netperf/static/hyperion-logo.svg" alt="Hyperion Solutions Group" class="brand-logo" />
+          <img src={logoSrc} alt={logoAlt} class="brand-logo" />
           <div>
-            <span class="brand-title">Bandwidth Test Manager</span>
-            <p class="brand-subtitle mb-0">hyperionsolutionsgroup.com</p>
+            <span class="brand-title">{titleText}</span>
+            {#if taglineText}
+              <p class="brand-subtitle mb-0">{taglineText}</p>
+            {/if}
           </div>
         </a>
         <div class="navbar-nav ms-auto align-items-center">
@@ -191,10 +200,12 @@
     <nav class="navbar navbar-expand navbar-dark bg-primary">
       <div class="container-fluid">
         <a class="navbar-brand brand-wrap text-decoration-none d-flex align-items-center" href="/netperf/">
-          <img src="/netperf/static/hyperion-logo.svg" alt="Hyperion Solutions Group" class="brand-logo" />
+          <img src={logoSrc} alt={logoAlt} class="brand-logo" />
           <div>
-            <span class="brand-title">Bandwidth Test Manager</span>
-            <p class="brand-subtitle mb-0">hyperionsolutionsgroup.com</p>
+            <span class="brand-title">{titleText}</span>
+            {#if taglineText}
+              <p class="brand-subtitle mb-0">{taglineText}</p>
+            {/if}
           </div>
         </a>
         <div class="navbar-nav ms-auto align-items-center">

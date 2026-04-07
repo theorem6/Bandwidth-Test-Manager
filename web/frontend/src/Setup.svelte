@@ -1,9 +1,100 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getBackendStatus, installDeps, clearOldData, clearIperfData, getTimezone, getTimezones, setTimezone, ntpInstall, getAlerts, getUsers, setPassword } from './lib/api';
-  import type { BackendStatus, AlertItem, UserItem } from './lib/api';
+  import {
+    getBackendStatus,
+    installDeps,
+    clearOldData,
+    clearIperfData,
+    getTimezone,
+    getTimezones,
+    setTimezone,
+    ntpInstall,
+    getAlerts,
+    getUsers,
+    setPassword,
+    getConfig,
+    putConfig,
+    uploadBrandLogo,
+  } from './lib/api';
+  import type { BackendStatus, AlertItem, UserItem, Branding } from './lib/api';
+  import { loadBranding } from './lib/branding';
 
   export let onToast: (msg: string, type?: 'success' | 'error') => void;
+
+  function str(v: unknown): string {
+    return v == null ? '' : String(v);
+  }
+
+  /** Branding fields applied from Setup (merged in config; full theme still in Settings). */
+  let setupBrandTitle = '';
+  let setupBrandTagline = '';
+  let setupBrandLogoUrl = '';
+  let setupBrandLogoAlt = '';
+  let setupBrandPrimary = '';
+  let setupBrandLogoBusy = false;
+  let savingBrand = false;
+
+  /** Only fields edited on Setup — merged with existing branding so Settings theme/CSS are preserved. */
+  function setupBrandingPayload(): Partial<Branding> {
+    return {
+      app_title: str(setupBrandTitle).trim(),
+      tagline: str(setupBrandTagline).trim(),
+      logo_url: str(setupBrandLogoUrl).trim(),
+      logo_alt: str(setupBrandLogoAlt).trim(),
+      primary_color: str(setupBrandPrimary).trim(),
+    };
+  }
+
+  function fillSetupBranding(b: Branding | undefined) {
+    const x = b || {};
+    setupBrandTitle = str(x.app_title);
+    setupBrandTagline = str(x.tagline);
+    setupBrandLogoUrl = str(x.logo_url);
+    setupBrandLogoAlt = str(x.logo_alt);
+    setupBrandPrimary = str(x.primary_color);
+  }
+
+  async function persistSetupBranding(): Promise<boolean> {
+    try {
+      await putConfig({ branding: setupBrandingPayload() as Branding });
+      await loadBranding();
+      return true;
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : 'Could not save site branding', 'error');
+      return false;
+    }
+  }
+
+  async function onSetupBrandLogoFile(ev: Event) {
+    const input = ev.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    setupBrandLogoBusy = true;
+    try {
+      const r = await uploadBrandLogo(file);
+      if (r.ok && r.logo_url) {
+        setupBrandLogoUrl = r.logo_url;
+        onToast('Logo uploaded.', 'success');
+        await loadBranding();
+      } else {
+        onToast(r.error || 'Logo upload failed.', 'error');
+      }
+    } finally {
+      setupBrandLogoBusy = false;
+      input.value = '';
+    }
+  }
+
+  async function runSaveBranding() {
+    savingBrand = true;
+    try {
+      if (await persistSetupBranding()) {
+        onToast('Site branding saved.');
+      }
+    } finally {
+      savingBrand = false;
+    }
+  }
 
   let status: BackendStatus | null = null;
   let loading = true;
@@ -48,6 +139,12 @@
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load status';
       status = null;
+    }
+    try {
+      const cfg = await getConfig();
+      fillSetupBranding(cfg.branding);
+    } catch {
+      /* not logged in or config unavailable */
     }
     try {
       timezoneInfo = await getTimezone();
@@ -124,6 +221,9 @@
     installing = true;
     error = '';
     try {
+      if (!(await persistSetupBranding())) {
+        return;
+      }
       const r = await installDeps();
       if (r.ok) {
         onToast(r.message || 'Dependencies installed. You can start the scheduler.');
@@ -232,6 +332,99 @@
     <p class="text-muted small mb-4">
       Install <strong>Ookla Speedtest CLI</strong>, <strong>iperf3</strong>, jq, mtr, and netperf scripts on this server. After install, configure which servers and tests to run from <strong>Settings</strong> (Ookla servers, iperf3 servers, and test profiles). The web service must run as root for install. Use <strong>Scheduler</strong> to start or stop the hourly test cron.
     </p>
+
+    <div class="border rounded p-3 mb-4 setup-branding">
+      <h6 class="text-dark mb-2"><i class="bi bi-palette me-1"></i> Site branding (optional)</h6>
+      <p class="small text-muted mb-3">
+        Set the name, tagline, logo, and accent color for this install. Values are saved when you run <strong>Install / fix dependencies</strong>, or use <strong>Save branding</strong> to apply without reinstalling packages. Advanced colors and custom CSS remain under <strong>Settings</strong> → Appearance.
+      </p>
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-md-6">
+          <label class="form-label small mb-0" for="setup-brand-title">App title</label>
+          <input
+            id="setup-brand-title"
+            type="text"
+            class="form-control form-control-sm"
+            bind:value={setupBrandTitle}
+            placeholder="Shown in the navbar"
+            disabled={loading}
+            autocomplete="organization"
+          />
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label small mb-0" for="setup-brand-tagline">Tagline</label>
+          <input
+            id="setup-brand-tagline"
+            type="text"
+            class="form-control form-control-sm"
+            bind:value={setupBrandTagline}
+            placeholder="e.g. company.com"
+            disabled={loading}
+          />
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label small mb-0" for="setup-brand-logo-alt">Logo alt text</label>
+          <input
+            id="setup-brand-logo-alt"
+            type="text"
+            class="form-control form-control-sm"
+            bind:value={setupBrandLogoAlt}
+            placeholder="Accessibility description"
+            disabled={loading}
+          />
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label small mb-0" for="setup-brand-primary">Primary color (hex)</label>
+          <input
+            id="setup-brand-primary"
+            type="text"
+            class="form-control form-control-sm font-monospace"
+            bind:value={setupBrandPrimary}
+            placeholder="#00d9ff"
+            disabled={loading}
+          />
+        </div>
+        <div class="col-12">
+          <label class="form-label small mb-0" for="setup-brand-logo-url">Logo URL</label>
+          <input
+            id="setup-brand-logo-url"
+            type="text"
+            class="form-control form-control-sm font-monospace mb-1"
+            bind:value={setupBrandLogoUrl}
+            placeholder="/netperf/static/uploads/brand-logo.png or https://…"
+            disabled={loading}
+          />
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <input
+              id="setup-brand-logo-file"
+              type="file"
+              class="form-control form-control-sm"
+              style="max-width: 220px"
+              accept=".png,.jpg,.jpeg,.svg,.webp,.gif,.ico,image/*"
+              on:change={onSetupBrandLogoFile}
+              disabled={loading || setupBrandLogoBusy}
+            />
+            <span class="small text-muted">{setupBrandLogoBusy ? 'Uploading…' : 'Upload stores the file under static/uploads/'}</span>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3">
+        <button
+          type="button"
+          class="btn btn-outline-secondary btn-sm"
+          on:click={runSaveBranding}
+          disabled={loading || savingBrand || installing}
+        >
+          {#if savingBrand}
+            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+          {:else}
+            <i class="bi bi-check2 me-1"></i>
+          {/if}
+          Save branding
+        </button>
+      </div>
+    </div>
+
     {#if loading}
       <p class="text-muted">Loading status…</p>
     {:else if error}

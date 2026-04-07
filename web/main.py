@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import db
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -104,7 +104,63 @@ class NoCacheStaticFiles(StaticFiles):
 
 static_dir = APP_DIR / "static"
 if static_dir.exists():
+    (static_dir / "uploads").mkdir(parents=True, exist_ok=True)
     app.mount("/static", NoCacheStaticFiles(directory=str(static_dir)), name="static")
+
+_BRANDING_KEYS = (
+    "app_title",
+    "tagline",
+    "logo_url",
+    "logo_alt",
+    "primary_color",
+    "primary_hover_color",
+    "navbar_gradient_start",
+    "navbar_gradient_end",
+    "navbar_bg_start",
+    "navbar_bg_end",
+    "custom_css",
+)
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{3,8}$")
+
+
+def _sanitize_logo_url(u: str) -> str:
+    u = (u or "").strip()[:2000]
+    if not u:
+        return ""
+    if u.startswith(("https://", "http://", "/netperf/")):
+        return u
+    if u.startswith("/") and not u.startswith("//"):
+        return u
+    return ""
+
+
+def normalize_branding(raw: Any) -> dict[str, str]:
+    """Return a full branding dict with safe string values (empty = use UI built-in defaults)."""
+    out = {k: "" for k in _BRANDING_KEYS}
+    if not isinstance(raw, dict):
+        return out
+    out["app_title"] = str(raw.get("app_title") or "").strip()[:200]
+    out["tagline"] = str(raw.get("tagline") or "").strip()[:300]
+    out["logo_url"] = _sanitize_logo_url(str(raw.get("logo_url") or ""))
+    out["logo_alt"] = str(raw.get("logo_alt") or "").strip()[:200]
+    for key in (
+        "primary_color",
+        "primary_hover_color",
+        "navbar_gradient_start",
+        "navbar_gradient_end",
+        "navbar_bg_start",
+        "navbar_bg_end",
+    ):
+        v = raw.get(key)
+        s = str(v).strip() if v is not None else ""
+        out[key] = s if _HEX_COLOR_RE.fullmatch(s) else ""
+    css = str(raw.get("custom_css") or "")[:50000]
+    if css:
+        low = css.lower()
+        if "<script" in low or "javascript:" in low:
+            css = ""
+    out["custom_css"] = css
+    return out
 
 
 def get_config() -> dict:
@@ -136,7 +192,9 @@ def get_config() -> dict:
         "auth_users": [],
     }
     if not CONFIG_PATH.exists():
-        return defaults
+        out = dict(defaults)
+        out["branding"] = normalize_branding({})
+        return out
     with open(CONFIG_PATH, "r") as f:
         data = json.load(f)
     for k, v in defaults.items():
@@ -146,6 +204,7 @@ def get_config() -> dict:
         for tk, tv in defaults["sla_thresholds"].items():
             if tk not in data["sla_thresholds"]:
                 data["sla_thresholds"][tk] = tv
+    data["branding"] = normalize_branding(data.get("branding"))
     return data
 
 
@@ -758,6 +817,58 @@ def api_config_get(_user: tuple[str, str] = Depends(get_current_user)):
     return JSONResponse(get_config())
 
 
+@app.get("/api/branding")
+def api_branding_public():
+    """Public branding fields for navbar, colors, and custom CSS (no auth; safe subset)."""
+    cfg = get_config()
+    b = cfg.get("branding") or {}
+    if not isinstance(b, dict):
+        b = {}
+    b = normalize_branding(b)
+    return JSONResponse(b)
+
+
+@app.post("/api/branding/logo")
+async def api_branding_logo_upload(
+    file: UploadFile = File(...),
+    _user: tuple[str, str] = Depends(require_admin),
+):
+    """Upload a logo image into static/uploads and set branding.logo_url in config."""
+    if not static_dir.exists():
+        return JSONResponse({"ok": False, "error": "Static directory not available."}, status_code=500)
+    raw_name = (file.filename or "").strip()
+    ext = Path(raw_name).suffix.lower()
+    allowed = {".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".ico"}
+    if ext not in allowed:
+        return JSONResponse(
+            {"ok": False, "error": f"Allowed types: {', '.join(sorted(allowed))}"},
+            status_code=400,
+        )
+    try:
+        body = await file.read()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    if len(body) > 2_000_000:
+        return JSONResponse({"ok": False, "error": "File too large (max 2 MB)."}, status_code=400)
+    upload_dir = static_dir / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"brand-logo{ext}"
+    dest = upload_dir / fname
+    try:
+        dest.write_bytes(body)
+    except OSError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    logo_url = f"/netperf/static/uploads/{fname}"
+    cur = get_config()
+    cur.setdefault("branding", normalize_branding({}))
+    cur["branding"] = normalize_branding({**cur["branding"], "logo_url": logo_url})
+    try:
+        save_config(cur)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, "logo_url": logo_url})
+
+
 @app.put("/api/config")
 @app.post("/api/config")
 async def api_config_set(request: Request, _user: tuple[str, str] = Depends(require_admin)):
@@ -835,6 +946,10 @@ async def api_config_set(request: Request, _user: tuple[str, str] = Depends(requ
     if "retention_days" in data:
         v = data.get("retention_days")
         cur["retention_days"] = int(v) if v is not None and str(v).strip() != "" else None
+    if "branding" in data and isinstance(data["branding"], dict):
+        prev = cur.get("branding") if isinstance(cur.get("branding"), dict) else {}
+        merged = {**prev, **data["branding"]}
+        cur["branding"] = normalize_branding(merged)
     try:
         save_config(cur)
         return JSONResponse({"ok": True})

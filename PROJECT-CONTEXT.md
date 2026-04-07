@@ -7,14 +7,23 @@
 - **Core tools:** Ookla Speedtest CLI (command line) and **iperf3** (client only).
 - Optional: **mtr**, **jq** (required for reporter).
 - **Configurable sites:** Ookla servers and iperf3 servers/tests are defined in `/etc/netperf/config.json` and can be edited in the web UI. Cron schedule is also in config.
-- **Web interface:** Optional web app (FastAPI + Uvicorn on port 8080) with **Setup** (install/fix dependencies, **Users** for configurable auth, **Recent SLA alerts**, timezone/NTP, purge), **Dashboard** (graphs with **date + Range** filter: Full day, Last 12h, Last 6h; when viewing today, x-axis extends to current time and the line holds the last speed to now with no new dot; **pan/zoom** on day charts to scroll back through time, **Reset zoom** to restore; CSV/summary export), **Scheduler** (start/stop cron; shows schedule and frequency), **Settings** (config, probe identity, SLA thresholds & webhook, retention, **Appearance** light/dark/system), and **Remote nodes** (add probes that report back; download agent script per node; per-node dashboard). UI is responsive. HTTPS via nginx. Public read-only landing; admin login for full access.
+- **Web interface:** Optional web app (FastAPI + Uvicorn on port 8080) with **Setup** (**Site branding** in the browser: title, tagline, logo, primary color — saved with **Save branding** or before **Install / fix dependencies**; install/fix dependencies, **Users** for configurable auth, **Recent SLA alerts**, timezone/NTP, purge), **Dashboard** (graphs with **date + Range** filter: Full day, Last 12h, Last 6h; when viewing today, x-axis extends to current time and the line holds the last speed to now with no new dot; **pan/zoom** on day charts to scroll back through time, **Reset zoom** to restore; CSV/summary export), **Scheduler** (start/stop cron; shows schedule and frequency), **Settings** (config, probe identity, SLA thresholds & webhook, retention, **Appearance** light/dark/system), and **Remote nodes** (add probes that report back; download agent script per node; per-node dashboard). UI is responsive. HTTPS via nginx. Public read-only landing; admin login for full access.
 - **Data:** Results stored in **SQLite** (`/var/log/netperf/netperf.db`); log files under `/var/log/netperf/YYYYMMDD/` are imported on read. Optional **probe_id** for multi-site; **retention_days** and purge from Setup. **Remote nodes** table stores node_id, name, location, token; ingest API accepts POST with **X-Node-Token** and writes results with that node’s probe_id.
 
 ---
 
 ## Install
 
-**On the server (as root):**
+**One-line install (no clone; downloads source if needed):** as root, pipe the raw `install.sh` from the repo into bash. Example for the public GitHub `main` branch:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh | sudo bash
+```
+
+- The script may fetch a source archive automatically (`BWM_REPO` / `BWM_REF`, default branch `main`). Set `BWM_DEBUG=1` for verbose download errors.
+- After install, open the web UI and use **Setup → Site branding** (admin) to white-label the app without editing JSON by hand.
+
+**On the server (as root), from a full clone:**
 
 ```bash
 sudo ./install.sh
@@ -64,6 +73,7 @@ sudo speedtest --accept-license
 - **webhook_url**, **webhook_secret:** URL and optional secret header for SLA violation POSTs.
 - **retention_days:** optional; purge (Setup) deletes data older than this (default 30 when omitted).
 - **auth_users:** optional list of `{ "username", "password_hash", "role" }`. When set, replaces built-in users; use **Setup → Users** to add/update (passwords stored hashed).
+- **branding:** optional object for white-label UI: `app_title`, `tagline`, `logo_url` (path or `https://`), `logo_alt`, hex colors (`primary_color`, `primary_hover_color`, `navbar_gradient_start` / `end` for the navbar title text, `navbar_bg_start` / `end` for dark-theme navbar gradient), and `custom_css` (injected into the page; no `script` / `javascript:`). **Setup → Site branding** (admin) sets the main fields from the browser (saved with **Save branding** or before **Install / fix dependencies**). **Settings → Appearance** has the full theme editor. **POST /api/branding/logo** (admin) uploads a logo into `static/uploads/`. **GET /api/branding** is public (no auth) so the login page matches your brand.
 - All of the above (except auth_users) are editable via **Settings**; auth is managed in **Setup → Users**. After changing site URL or cert paths, run `sudo ./web/setup-https.sh` on the server to apply.
 
 ---
@@ -87,7 +97,7 @@ All must be run as root. Tester reads `/etc/netperf/config.json` (or `NETPERF_CO
 - **Usage:** `netperf-scheduler [start | stop | h]`
 - **start:** Adds cron job using **cron_schedule** from config (default `5 * * * *`), restarts cron. The cron job runs `/bin/netperf-cron-run`, which invokes netperf-tester with `/var/log/netperf/YYYYMMDD` for the current date.
 - **stop:** Removes netperf cron job, restarts cron.
-- **Install from web UI:** The **Setup** page shows backend status (speedtest, iperf3, jq, config, cron). **Install / fix dependencies** runs `/opt/netperf-web/install-deps.sh` (Ookla repo, apt install speedtest iperf3 jq mtr, accept license, copy scripts to `/bin`). The web service must run as root for this to succeed.
+- **Install from web UI:** The **Setup** page includes **Site branding** and shows backend status (speedtest, iperf3, jq, config, cron). **Install / fix dependencies** saves branding first, then runs `/opt/netperf-web/install-deps.sh` (Ookla repo, apt install speedtest iperf3 jq mtr, accept license, copy scripts to `/bin`). The web service must run as root for this to succeed.
 
 ---
 

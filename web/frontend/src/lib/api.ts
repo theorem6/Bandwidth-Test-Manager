@@ -86,7 +86,22 @@ export interface SlaThresholds {
   max_latency_ms?: number | null;
 }
 
+export interface Branding {
+  app_title?: string;
+  tagline?: string;
+  logo_url?: string;
+  logo_alt?: string;
+  primary_color?: string;
+  primary_hover_color?: string;
+  navbar_gradient_start?: string;
+  navbar_gradient_end?: string;
+  navbar_bg_start?: string;
+  navbar_bg_end?: string;
+  custom_css?: string;
+}
+
 export interface Config {
+  branding?: Branding;
   site_url?: string;
   ssl_cert_path?: string;
   ssl_key_path?: string;
@@ -154,6 +169,20 @@ export async function putConfig(data: Partial<Config>): Promise<{ ok: boolean; e
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
+}
+
+/** Upload logo image (admin). Sets branding.logo_url on the server. */
+export async function uploadBrandLogo(file: File): Promise<{ ok: boolean; logo_url?: string; error?: string }> {
+  const base = getBase();
+  const fd = new FormData();
+  fd.append('file', file);
+  const headers = { ...authHeaders() };
+  const r = await fetch(base + '/api/branding/logo', { method: 'POST', headers, body: fd });
+  const body = (await r.json().catch(() => ({}))) as { ok?: boolean; logo_url?: string; error?: string };
+  if (!r.ok) {
+    return { ok: false, error: typeof body.error === 'string' ? body.error : r.statusText };
+  }
+  return { ok: !!body.ok, logo_url: body.logo_url, error: body.error };
 }
 
 export async function getDates(): Promise<{ dates: string[] }> {

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getConfig, putConfig, getSpeedtestServers, checkSla } from './lib/api';
-  import type { Config, OoklaServer, IperfServer, IperfTest, SpeedtestServerOption } from './lib/api';
+  import { getConfig, putConfig, getSpeedtestServers, checkSla, uploadBrandLogo } from './lib/api';
+  import type { Config, OoklaServer, IperfServer, IperfTest, SpeedtestServerOption, Branding } from './lib/api';
+  import { loadBranding } from './lib/branding';
   import { themeMode, setTheme, type ThemeMode } from './lib/theme';
 
   const themeOptions: { value: ThemeMode; label: string; icon: string }[] = [
@@ -39,6 +40,70 @@
   let retentionDays = '';
   let ooklaLocalPatternsText = '';
   let ooklaLocalAutoIsp = true;
+
+  let brandAppTitle = '';
+  let brandTagline = '';
+  let brandLogoUrl = '';
+  let brandLogoAlt = '';
+  let brandPrimary = '';
+  let brandPrimaryHover = '';
+  let brandGradStart = '';
+  let brandGradEnd = '';
+  let brandNavBgStart = '';
+  let brandNavBgEnd = '';
+  let brandCustomCss = '';
+  let brandLogoBusy = false;
+
+  function brandingPayload(): Branding {
+    return {
+      app_title: str(brandAppTitle).trim(),
+      tagline: str(brandTagline).trim(),
+      logo_url: str(brandLogoUrl).trim(),
+      logo_alt: str(brandLogoAlt).trim(),
+      primary_color: str(brandPrimary).trim(),
+      primary_hover_color: str(brandPrimaryHover).trim(),
+      navbar_gradient_start: str(brandGradStart).trim(),
+      navbar_gradient_end: str(brandGradEnd).trim(),
+      navbar_bg_start: str(brandNavBgStart).trim(),
+      navbar_bg_end: str(brandNavBgEnd).trim(),
+      custom_css: brandCustomCss,
+    };
+  }
+
+  function loadBrandingForm(br: Branding | undefined) {
+    const b = br || {};
+    brandAppTitle = str(b.app_title);
+    brandTagline = str(b.tagline);
+    brandLogoUrl = str(b.logo_url);
+    brandLogoAlt = str(b.logo_alt);
+    brandPrimary = str(b.primary_color);
+    brandPrimaryHover = str(b.primary_hover_color);
+    brandGradStart = str(b.navbar_gradient_start);
+    brandGradEnd = str(b.navbar_gradient_end);
+    brandNavBgStart = str(b.navbar_bg_start);
+    brandNavBgEnd = str(b.navbar_bg_end);
+    brandCustomCss = typeof b.custom_css === 'string' ? b.custom_css : '';
+  }
+
+  async function onBrandLogoFile(ev: Event) {
+    const input = ev.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    brandLogoBusy = true;
+    try {
+      const r = await uploadBrandLogo(file);
+      if (r.ok && r.logo_url) {
+        brandLogoUrl = r.logo_url;
+        onToast('Logo uploaded.', 'success');
+        await loadBranding();
+      } else {
+        onToast(r.error || 'Logo upload failed.', 'error');
+      }
+    } finally {
+      brandLogoBusy = false;
+      input.value = '';
+    }
+  }
 
   function ooklaToForm(raw: OoklaServer[]): { id: string; label: string }[] {
     if (!Array.isArray(raw)) return [];
@@ -160,6 +225,7 @@
       retentionDays = c.retention_days != null ? String(c.retention_days) : '';
       ooklaLocalPatternsText = Array.isArray(c.ookla_local_patterns) ? c.ookla_local_patterns.join('\n') : '';
       ooklaLocalAutoIsp = c.ookla_local_auto_isp !== false;
+      loadBrandingForm(c.branding);
       loadOoklaOptions();
     } catch {
       message = 'Failed to load config';
@@ -240,11 +306,13 @@
         webhook_url: str(webhookUrl).trim(),
         webhook_secret: str(webhookSecret).trim(),
         retention_days: str(retentionDays).trim() ? parseInt(String(retentionDays), 10) || null : null,
+        branding: brandingPayload(),
       });
       if (r.ok) {
         message = 'Saved.';
         messageType = 'success';
         onToast('Configuration saved.');
+        await loadBranding();
       } else {
         message = r.error || 'Error';
         messageType = 'danger';
@@ -277,6 +345,70 @@
     }
   }
 </script>
+
+<!-- Branding (admin): logo, text, colors, custom CSS -->
+<div class="card mb-4">
+  <div class="card-header">Branding</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      Customize the navbar logo, title, tagline, and theme colors. Empty fields keep built-in defaults (except tagline: leave empty to hide it once other branding is set).
+      Logo file is stored on the server under <code class="small">static/uploads/</code>.
+    </p>
+    <div class="row g-2 mb-3">
+      <div class="col-md-4">
+        <label class="form-label small" for="brand-app-title">App title</label>
+        <input id="brand-app-title" type="text" class="form-control form-control-sm" bind:value={brandAppTitle} placeholder="Bandwidth Test Manager" />
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small" for="brand-tagline">Tagline (under title)</label>
+        <input id="brand-tagline" type="text" class="form-control form-control-sm" bind:value={brandTagline} placeholder="e.g. yourcompany.com" />
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small" for="brand-logo-alt">Logo alt text</label>
+        <input id="brand-logo-alt" type="text" class="form-control form-control-sm" bind:value={brandLogoAlt} placeholder="Company name" />
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label small" for="brand-logo-url">Logo URL or path</label>
+      <input id="brand-logo-url" type="text" class="form-control form-control-sm font-monospace" bind:value={brandLogoUrl} placeholder="/netperf/static/uploads/brand-logo.png or https://..." />
+      <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+        <input id="brand-logo-file" type="file" class="form-control form-control-sm" style="max-width:220px" accept=".png,.jpg,.jpeg,.svg,.webp,.gif,.ico,image/*" on:change={onBrandLogoFile} disabled={brandLogoBusy} />
+        <span class="small text-muted">{brandLogoBusy ? 'Uploading…' : 'Upload replaces file at uploads/brand-logo.*'}</span>
+      </div>
+    </div>
+    <p class="small text-muted mb-2">Colors: 3- or 6-digit hex (e.g. <code>#00d9ff</code>). Leave empty for theme defaults.</p>
+    <div class="row g-2 mb-3">
+      <div class="col-6 col-md-2">
+        <label class="form-label small" for="brand-primary">Primary</label>
+        <input id="brand-primary" type="text" class="form-control form-control-sm font-monospace" bind:value={brandPrimary} placeholder="#00d9ff" />
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small" for="brand-primary-h">Primary hover</label>
+        <input id="brand-primary-h" type="text" class="form-control form-control-sm font-monospace" bind:value={brandPrimaryHover} placeholder="#00f2fe" />
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small" for="brand-g1">Title gradient A</label>
+        <input id="brand-g1" type="text" class="form-control form-control-sm font-monospace" bind:value={brandGradStart} placeholder="#00f2fe" />
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small" for="brand-g2">Title gradient B</label>
+        <input id="brand-g2" type="text" class="form-control form-control-sm font-monospace" bind:value={brandGradEnd} placeholder="#4facfe" />
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small" for="brand-n1">Navbar bg A (dark)</label>
+        <input id="brand-n1" type="text" class="form-control form-control-sm font-monospace" bind:value={brandNavBgStart} placeholder="#1a2332" />
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small" for="brand-n2">Navbar bg B (dark)</label>
+        <input id="brand-n2" type="text" class="form-control form-control-sm font-monospace" bind:value={brandNavBgEnd} placeholder="#1e3a4f" />
+      </div>
+    </div>
+    <div class="mb-0">
+      <label class="form-label small" for="brand-css">Custom CSS (optional)</label>
+      <textarea id="brand-css" class="form-control form-control-sm font-monospace" rows="6" bind:value={brandCustomCss} placeholder="/* Injected into page head. No script tags. */"></textarea>
+    </div>
+  </div>
+</div>
 
 <!-- Appearance: light / dark / system -->
 <div class="card mb-4">

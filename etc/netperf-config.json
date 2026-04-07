@@ -16,6 +16,19 @@
   "webhook_secret": "",
   "retention_days": null,
   "auth_users": [],
+  "branding": {
+    "app_title": "",
+    "tagline": "hyperionsolutionsgroup.com",
+    "logo_url": "",
+    "logo_alt": "",
+    "primary_color": "",
+    "primary_hover_color": "",
+    "navbar_gradient_start": "",
+    "navbar_gradient_end": "",
+    "navbar_bg_start": "",
+    "navbar_bg_end": "",
+    "custom_css": ""
+  },
   "ookla_local_patterns": [],
   "ookla_local_auto_isp": true,
   "ookla_servers": [

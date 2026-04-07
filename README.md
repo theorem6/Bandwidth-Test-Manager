@@ -6,32 +6,53 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
 
 ## Quick start (Linux)
 
-1. **One-shot install** (deps + scripts + config + web UI)
-   ```bash
-   sudo ./install.sh
-   ```
-   Use `sudo ./install.sh --no-web` to skip the web interface.
+1. **One-shot install** (deps + scripts + config + web UI). If you run `install.sh` without a full project tree beside it, the script downloads a source archive automatically (no `git clone` required). Installer output is generic; set `BWM_DEBUG=1` to print fetch URLs if something fails.
 
-2. **Configure sites** (optional)  
+   **Copy-paste install (this repository):**
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh | sudo bash
+   ```
+
+   The default branch for this repo is **`main`**. The full install includes the web UI (FastAPI + built static assets under `/opt/netperf-web`).
+
+   CLI + cron only (no web app):
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh | sudo bash -s -- --no-web
+   ```
+
+   **Other sources:** pipe any hosted raw `install.sh` into bash (your fork, mirror, or release). **Source archive:** `install.sh` uses `BWM_REPO` (HTTPS git web root) and `BWM_REF` (branch). Override when not using the defaults inside the script:
+
+   ```bash
+   curl -fsSL 'https://raw.githubusercontent.com/OWNER/REPO/main/install.sh' | sudo env BWM_REPO='https://github.com/OWNER/REPO' BWM_REF='main' bash
+   ```
+
+   If you already have a full clone, run `sudo ./install.sh` from the project root instead (nothing is re-downloaded).
+
+2. **Branding (web UI)**  
+   After install, open the web UI (default `http://<server>:8080/netperf/`, or your HTTPS URL after running `sudo ./web/setup-https.sh` on the server). Log in as admin, go to **Setup**, and use **Site branding (optional)** to set title, tagline, logo, and primary color. Click **Save branding** or run **Install / fix dependencies** (branding is saved first). Full theme options are under **Settings → Appearance**.
+
+3. **Configure sites** (optional)  
    Edit `/etc/netperf/config.json` or use **Settings** in the web UI to choose Ookla servers, iperf3 hosts/tests, and cron schedule.
 
-3. **Start/stop scheduled testing**
+4. **Start/stop scheduled testing**
    ```bash
    sudo netperf-scheduler start   # run tests per cron_schedule in config (default :05 every hour), log under /var/log/netperf/YYYYMMDD
    sudo netperf-scheduler stop     # remove schedule
    ```
    Or use **Scheduler** in the web UI to start/stop. The cron schedule is configurable in **Settings** (e.g. `5 * * * *`).
 
-4. **Web interface** (if installed)
+5. **Web interface** (if installed)
    - Open the **Site URL** from Settings (e.g. `https://your-server.netperf/`). Use HTTPS with no port in the URL; run `sudo ./web/setup-https.sh` on the server once to enable it.
    - **Landing:** read-only dashboard and scheduler toggle; **Login** (admin) unlocks the full menu.
-   - **Setup:** backend status, **Install / fix dependencies**, **Users** (configurable auth: add/update users, passwords stored hashed), **Recent SLA alerts**, timezone/NTP, purge old data (retention).
+   - **Setup:** **Site branding** (title, tagline, logo, primary color), backend status, **Install / fix dependencies**, **Users** (configurable auth), **Recent SLA alerts**, timezone/NTP, purge old data (retention).
    - **Dashboard:** date picker, **Range** (Full day / Last 12 hours / Last 6 hours), per-site and trend graphs (download/upload/latency, iperf). When viewing **today**, graphs extend to current time (line holds last speed to now). **Drag to pan, scroll to zoom** on day charts; **Reset zoom** to restore. **Run test now** (admin), CSV export, **Download summary (30d)**.
    - **Scheduler:** start or stop the test cron.
    - **Settings:** site URL, SSL, speed limit, cron, Ookla/iperf servers, **probe identity**, **SLA thresholds & webhook**, **data retention**, **Appearance** (light/dark/system theme).
    - **Remote nodes:** Add remote probes (POPs, customer sites) that report back to this server. For each node: **Download script** (bash agent with URL + token), run on the remote machine (e.g. via cron); results appear under that node. Each node has its own **dashboard page** (graphs filtered by node).
 
-5. **Generate speedtest report** (CLI, after some runs)
+6. **Generate speedtest report** (CLI, after some runs)
    ```bash
    sudo netperf-reporter -s /var/log/netperf/YYYYMMDD
    ```
@@ -72,7 +93,7 @@ Example: `./deploy-gce.sh acs-hss-server us-central1-a`
 - **Update existing deployment (from server):** If the repo is already on the server, pull and reinstall the web app:
   ```bash
   cd /path/to/Bandwidth-Test-Manager
-  git pull origin master
+  git pull origin main
   cd web/frontend && npm run build && cd ../..
   sudo ./install.sh
   ```
@@ -86,7 +107,7 @@ Example: `./deploy-gce.sh acs-hss-server us-central1-a`
 ## Git and releases
 
 - **Clone:** `git clone <repo-url> && cd Bandwidth-Test-Manager`
-- **Push changes:** `git add . && git commit -m "..." && git push origin master`
+- **Push changes:** `git add . && git commit -m "..." && git push origin main`
 - **Releases:** Tags and release assets are created from the repo. To create a release, tag and push, then create a release in GitHub (or use `gh release create`).
   ```bash
   git tag -a v1.0.0 -m "Release v1.0.0"
