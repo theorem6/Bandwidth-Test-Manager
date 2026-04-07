@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { getConfig, putConfig, getSpeedtestServers, checkSla, uploadBrandLogo } from './lib/api';
   import type { Config, OoklaServer, IperfServer, IperfTest, SpeedtestServerOption, Branding } from './lib/api';
   import { loadBranding } from './lib/branding';
@@ -19,9 +19,9 @@
   let sslKeyPath = '';
   let limitMbps = '';
   let cronSchedule = '5 * * * *';
-  /** Ookla server search: input vs applied query (Search button / Enter applies). */
-  let ooklaSearchInput = '';
+  /** Ookla server list filter (trim on Search / Enter). ooklaFilterEpoch forces select DOM refresh. */
   let ooklaSearchQuery = '';
+  let ooklaFilterEpoch = 0;
   let iperfDurationSeconds = 10;
   let ooklaServers: { id: string; label: string }[] = [];
   let iperfServers: { host: string; label: string }[] = [];
@@ -154,7 +154,7 @@
       const r = await getSpeedtestServers();
       ooklaServerOptions = r.servers || [];
       if (r.error) ooklaOptionsError = r.error;
-      ooklaSearchQuery = ooklaSearchInput.trim();
+      ooklaFilterEpoch += 1;
     } catch (e) {
       ooklaServerOptions = [];
       ooklaOptionsError = e instanceof Error ? e.message : 'Failed to load server list';
@@ -163,14 +163,20 @@
     }
   }
 
-  function applyOoklaSearch() {
-    ooklaSearchQuery = ooklaSearchInput.trim();
+  async function applyOoklaSearch() {
+    const t = ooklaSearchQuery.trim();
+    ooklaSearchQuery = t;
+    ooklaFilterEpoch += 1;
+    await tick();
+    if (ooklaServerOptions.length > 400 && !t) {
+      onToast('Large server list: type a city, country, or provider, then press Search.', 'error');
+    }
   }
 
   function onOoklaSearchKeydown(ev: KeyboardEvent) {
     if (ev.key === 'Enter') {
       ev.preventDefault();
-      applyOoklaSearch();
+      void applyOoklaSearch();
     }
   }
 
@@ -217,7 +223,7 @@
   }
 
   $: ooklaFiltered = (() => {
-    const q = ooklaSearchQuery.toLowerCase();
+    const q = ooklaSearchQuery.trim().toLowerCase();
     let arr = ooklaServerOptions;
     if (q) {
       arr = arr.filter((s) => {
@@ -228,9 +234,11 @@
     return arr.slice(0, 600);
   })();
 
-  $: ooklaGrouped = groupOoklaByCountry(ooklaFiltered);
-  /** Large catalog: require Search click so we do not render thousands of options */
-  $: ooklaNeedsFilter = ooklaServerOptions.length > 400 && ooklaSearchQuery.length === 0;
+  /** Include epoch so grouping recomputes after Search forces trim + key bump */
+  $: ooklaGrouped = (ooklaFilterEpoch, groupOoklaByCountry(ooklaFiltered));
+
+  /** Large catalog: require a non-empty search before filling the dropdown */
+  $: ooklaNeedsFilter = ooklaServerOptions.length > 400 && !ooklaSearchQuery.trim();
 
   function onOoklaServerSelect(i: number, value: string) {
     const opt = value === 'auto' || value === 'local' ? null : ooklaServerOptions.find((s) => String(s.id) === value);
@@ -555,7 +563,7 @@
           type="search"
           class="form-control"
           placeholder="City, country, provider, or server ID…"
-          bind:value={ooklaSearchInput}
+          bind:value={ooklaSearchQuery}
           on:keydown={onOoklaSearchKeydown}
           autocomplete="off"
           disabled={ooklaOptionsLoading}
@@ -563,9 +571,9 @@
         <button
           type="button"
           class="btn btn-primary"
-          on:click={applyOoklaSearch}
+          on:click|preventDefault|stopPropagation={() => void applyOoklaSearch()}
           disabled={ooklaOptionsLoading}
-          title="Apply search to the dropdowns below"
+          title="Trim text and refresh the server dropdowns"
         >
           Search
         </button>
@@ -594,21 +602,23 @@
                   <option>Enter a search above, then click Search…</option>
                 </select>
               {:else}
-                <select
-                  class="form-select form-select-sm"
-                  value={row.id}
-                  on:change={(e) => onOoklaServerSelect(i, e.currentTarget.value)}
-                >
-                  <option value="local">Local (ISP / nearest match)</option>
-                  <option value="auto">Auto (Ookla default)</option>
-                  {#each ooklaGrouped as g}
-                    <optgroup label={g.country}>
-                      {#each g.servers as srv}
-                        <option value={srv.id}>{fullServerName(srv)}</option>
-                      {/each}
-                    </optgroup>
-                  {/each}
-                </select>
+                {#key ooklaFilterEpoch}
+                  <select
+                    class="form-select form-select-sm"
+                    value={row.id}
+                    on:change={(e) => onOoklaServerSelect(i, e.currentTarget.value)}
+                  >
+                    <option value="local">Local (ISP / nearest match)</option>
+                    <option value="auto">Auto (Ookla default)</option>
+                    {#each ooklaGrouped as g}
+                      <optgroup label={g.country}>
+                        {#each g.servers as srv}
+                          <option value={String(srv.id)}>{fullServerName(srv)}</option>
+                        {/each}
+                      </optgroup>
+                    {/each}
+                  </select>
+                {/key}
               {/if}
             {:else}
               <input type="text" class="form-control form-control-sm" placeholder="local, auto, or numeric server ID" bind:value={row.id} />
