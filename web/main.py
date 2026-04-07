@@ -104,36 +104,6 @@ class NoCacheStaticFiles(StaticFiles):
 
 static_dir = APP_DIR / "static"
 
-
-def _safe_file_under_dir(root: Path, relative: str) -> Path | None:
-    """Return resolved file path if it exists under root (no path traversal)."""
-    if not relative or ".." in Path(relative).parts:
-        return None
-    try:
-        full = (root / relative).resolve()
-        full.relative_to(root.resolve())
-    except ValueError:
-        return None
-    return full if full.is_file() else None
-
-
-@app.get("/netperf/static/{filepath:path}")
-async def serve_netperf_prefixed_static(filepath: str):
-    """Vite base is /netperf/static/ — explicit route so assets always resolve (Uvicorn + nginx)."""
-    if not static_dir.is_dir():
-        raise HTTPException(status_code=404, detail="static dir missing")
-    full = _safe_file_under_dir(static_dir, filepath)
-    if full is None:
-        raise HTTPException(status_code=404, detail="not found")
-    return FileResponse(
-        str(full),
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate",
-            "Pragma": "no-cache",
-        },
-    )
-
-
 if static_dir.exists():
     (static_dir / "uploads").mkdir(parents=True, exist_ok=True)
     app.mount("/static", NoCacheStaticFiles(directory=str(static_dir)), name="static")
@@ -158,7 +128,7 @@ def _sanitize_logo_url(u: str) -> str:
     u = (u or "").strip()[:2000]
     if not u:
         return ""
-    if u.startswith(("https://", "http://", "/netperf/")):
+    if u.startswith(("https://", "http://", "/netperf/", "/static/")):
         return u
     if u.startswith("/") and not u.startswith("//"):
         return u
@@ -889,7 +859,7 @@ async def api_branding_logo_upload(
         dest.write_bytes(body)
     except OSError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-    logo_url = f"/netperf/static/uploads/{fname}"
+    logo_url = f"/static/uploads/{fname}"
     cur = get_config()
     cur.setdefault("branding", normalize_branding({}))
     cur["branding"] = normalize_branding({**cur["branding"], "logo_url": logo_url})

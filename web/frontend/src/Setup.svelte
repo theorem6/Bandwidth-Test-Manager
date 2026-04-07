@@ -391,7 +391,7 @@
             type="text"
             class="form-control form-control-sm font-monospace mb-1"
             bind:value={setupBrandLogoUrl}
-            placeholder="/netperf/static/uploads/brand-logo.png or https://…"
+            placeholder="/static/uploads/brand-logo.png or https://…"
             disabled={loading}
           />
           <div class="d-flex flex-wrap align-items-center gap-2">

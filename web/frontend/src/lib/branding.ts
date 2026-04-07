@@ -8,7 +8,7 @@ import type { Branding } from './api';
 export const branding = writable<Branding | null>(null);
 
 const BUILTIN = {
-  logo: '/netperf/static/hyperion-logo.svg',
+  logo: '/static/hyperion-logo.svg',
   title: 'Bandwidth Test Manager',
   tagline: 'hyperionsolutionsgroup.com',
 };

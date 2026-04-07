@@ -370,7 +370,7 @@
     </div>
     <div class="mb-3">
       <label class="form-label small" for="brand-logo-url">Logo URL or path</label>
-      <input id="brand-logo-url" type="text" class="form-control form-control-sm font-monospace" bind:value={brandLogoUrl} placeholder="/netperf/static/uploads/brand-logo.png or https://..." />
+      <input id="brand-logo-url" type="text" class="form-control form-control-sm font-monospace" bind:value={brandLogoUrl} placeholder="/static/uploads/brand-logo.png or https://..." />
       <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
         <input id="brand-logo-file" type="file" class="form-control form-control-sm" style="max-width:220px" accept=".png,.jpg,.jpeg,.svg,.webp,.gif,.ico,image/*" on:change={onBrandLogoFile} disabled={brandLogoBusy} />
         <span class="small text-muted">{brandLogoBusy ? 'Uploading…' : 'Upload replaces file at uploads/brand-logo.*'}</span>

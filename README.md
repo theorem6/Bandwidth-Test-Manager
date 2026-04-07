@@ -41,7 +41,7 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
    | **One-line install (pipe to bash)** | `https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh` |
    | **Repository (browser)** | [github.com/theorem6/Bandwidth-Test-Manager](https://github.com/theorem6/Bandwidth-Test-Manager) |
 
-   **Smoke-test the web UI** after install (Uvicorn only, no nginx): open **`http://<server>:8080/`** (root). Use your HTTPS **Site URL** from Settings when behind nginx (`/netperf/` path). Assets are served at both `/static/…` and `/netperf/static/…` so the UI loads correctly with or without a reverse proxy.
+   **Smoke-test the web UI** after install (Uvicorn only, no nginx): open **`http://<server>:8080/`** (root). Assets load from **`/static/assets/…`**. Behind nginx, proxy **`/static/`** as well as **`/netperf/`** (see `web/nginx-netperf-path.conf`).
 
 2. **Branding (web UI)**  
    After install, open the web UI (see table above). Log in as admin, go to **Setup**, and use **Site branding (optional)** to set title, tagline, logo, and primary color. Click **Save branding** or run **Install / fix dependencies** (branding is saved first). Full theme options are under **Settings → Appearance**. For HTTPS and a public path like `/netperf/`, run `sudo ./web/setup-https.sh` on the server.
@@ -78,7 +78,7 @@ The UI is built with **Svelte**, **TypeScript**, and **Vite**. Before deploying 
 cd web/frontend && npm install && npm run build
 ```
 
-This writes the app into `web/static/`. The FastAPI backend serves `/static/…` and explicitly serves the same files under `/netperf/static/…` (Vite `base`) so assets load on Uvicorn or behind nginx.
+This writes the app into `web/static/`. The FastAPI backend mounts assets at **`/static/…`** (Vite `base: '/static/'`). With nginx under `/netperf/`, also proxy **`/static/`** — see `web/nginx-netperf-path.conf`.
 
 ## Private GitLab / offline bundle
 
