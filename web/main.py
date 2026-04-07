@@ -90,6 +90,24 @@ APP_DIR = Path(__file__).resolve().parent
 STORAGE = Path(os.environ.get("NETPERF_STORAGE", "/var/log/netperf"))
 CONFIG_PATH = Path(os.environ.get("NETPERF_CONFIG", "/etc/netperf/config.json"))
 
+# UI allows only these (see web/frontend/src/lib/schedule.ts)
+_ALLOWED_CRON_SCHEDULES = frozenset({"5 * * * *", "5 6 * * *", "5 */6 * * *"})
+
+
+def _normalize_cron_schedule(v: str) -> str:
+    """Map any legacy 5-field cron to one of the allowed presets."""
+    s = re.sub(r"\s+", " ", (v or "").strip()) or "5 * * * *"
+    if s in _ALLOWED_CRON_SCHEDULES:
+        return s
+    parts = s.split()
+    if len(parts) >= 5:
+        if parts[1] == "*/6":
+            return "5 */6 * * *"
+        if parts[1] == "*" and parts[2] == "*":
+            return "5 * * * *"
+    return "5 6 * * *"
+
+
 app = FastAPI(title="Bandwidth Test Manager", docs_url=None, redoc_url=None)
 
 
@@ -206,6 +224,7 @@ def get_config() -> dict:
     if not CONFIG_PATH.exists():
         out = dict(defaults)
         out["branding"] = normalize_branding({})
+        out["cron_schedule"] = _normalize_cron_schedule(str(out.get("cron_schedule", "5 * * * *")))
         return out
     with open(CONFIG_PATH, "r") as f:
         data = json.load(f)
@@ -217,6 +236,7 @@ def get_config() -> dict:
             if tk not in data["sla_thresholds"]:
                 data["sla_thresholds"][tk] = tv
     data["branding"] = normalize_branding(data.get("branding"))
+    data["cron_schedule"] = _normalize_cron_schedule(str(data.get("cron_schedule", "5 * * * *")))
     return data
 
 
@@ -602,6 +622,44 @@ def _parse_speedtest_servers_text(out: str) -> list[dict]:
     return servers
 
 
+def _fetch_speedtest_servers_public_api() -> list[dict]:
+    """Large server list from Speedtest.net (by client geo). Supplements Ookla CLI -L (~10 nearest)."""
+    url = "https://www.speedtest.net/api/js/servers?engine=js&https_functional=true&limit=10000"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; BandwidthTestManager/1.0)",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw)
+    except Exception:
+        return []
+    out: list[dict] = []
+    if not isinstance(data, list):
+        return out
+    for s in data:
+        if not isinstance(s, dict):
+            continue
+        try:
+            sid = int(str(s.get("id", "")).strip())
+        except (TypeError, ValueError):
+            continue
+        if sid <= 0:
+            continue
+        sponsor = str(s.get("sponsor") or "").strip()
+        city = str(s.get("name") or "").strip()
+        country = str(s.get("country") or "").strip()
+        loc_parts = [x for x in (city, country) if x]
+        loc = ", ".join(loc_parts)
+        name = sponsor or city or str(sid)
+        out.append({"id": sid, "name": name, "location": loc, "country": country})
+    return out
+
+
 @app.get("/api/me")
 def api_me(user: tuple[str, str] = Depends(get_current_user)):
     """Return current user and role (for login flow and UI)."""
@@ -687,7 +745,7 @@ def api_speedtest_servers(_user: tuple[str, str] = Depends(get_current_user)):
         if not out or (code != 0 and not servers):
             error_note = err or "JSON list failed or empty"
     except FileNotFoundError:
-        return JSONResponse({"servers": [], "error": "speedtest CLI not installed. Use Setup to install."})
+        error_note = "speedtest CLI not installed — using Speedtest.net catalog only."
 
     # Fallback 1: plain text with same binary (no -f json)
     if not servers:
@@ -715,14 +773,39 @@ def api_speedtest_servers(_user: tuple[str, str] = Depends(get_current_user)):
         except Exception:
             pass
 
-    # Dedupe by id
+    # Dedupe CLI list by id
     seen = set()
-    unique = []
+    unique: list[dict] = []
     for s in servers:
         sid = s["id"]
         if sid not in seen:
             seen.add(sid)
             unique.append(s)
+
+    # Merge with Speedtest.net API (thousands near client geo); CLI alone is ~10 nearest
+    http_servers = _fetch_speedtest_servers_public_api()
+    merged: dict[int, dict] = {}
+    for s in http_servers:
+        merged[int(s["id"])] = dict(s)
+    for s in unique:
+        sid = int(s["id"])
+        if sid not in merged:
+            merged[sid] = dict(s)
+        else:
+            o = merged[sid]
+            if not (o.get("name") or "").strip() and s.get("name"):
+                o["name"] = s["name"]
+            if not (o.get("location") or "").strip() and s.get("location"):
+                o["location"] = s["location"]
+    final_list = sorted(
+        merged.values(),
+        key=lambda x: (str(x.get("country") or "ZZZ"), str(x.get("name") or ""), int(x["id"])),
+    )
+    if not http_servers and unique and not error_note:
+        error_note = (
+            "Full server catalog unavailable (HTTPS to speedtest.net failed). "
+            "Showing nearest servers from the Speedtest CLI only."
+        )
 
     # Don't show raw C++ crash to user (e.g. "terminate called... basic_string::_M_construct null not valid")
     if error_note and (
@@ -732,7 +815,7 @@ def api_speedtest_servers(_user: tuple[str, str] = Depends(get_current_user)):
     ):
         error_note = "Speedtest CLI list failed on this build (you can still enter a server ID below)."
 
-    return JSONResponse({"servers": unique, "error": error_note} if error_note else {"servers": unique})
+    return JSONResponse({"servers": final_list, "error": error_note} if error_note else {"servers": final_list})
 
 
 @app.get("/api/health")
@@ -896,10 +979,7 @@ async def api_config_set(request: Request, _user: tuple[str, str] = Depends(requ
         if key in data:
             cur[key] = (data.get(key) or "").strip()
     if "cron_schedule" in data:
-        v = (data.get("cron_schedule") or "").strip() or "5 * * * *"
-        # Basic sanity: 5 fields for cron
-        if len(v.split()) >= 5:
-            cur["cron_schedule"] = v
+        cur["cron_schedule"] = _normalize_cron_schedule(str(data.get("cron_schedule") or ""))
     if "iperf_duration_seconds" in data:
         v = data.get("iperf_duration_seconds")
         try:

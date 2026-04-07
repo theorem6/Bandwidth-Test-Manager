@@ -4,6 +4,7 @@
   import type { Config, OoklaServer, IperfServer, IperfTest, SpeedtestServerOption, Branding } from './lib/api';
   import { loadBranding } from './lib/branding';
   import { themeMode, setTheme, type ThemeMode } from './lib/theme';
+  import { CRON_PRESETS, normalizeCronToPreset } from './lib/schedule';
 
   const themeOptions: { value: ThemeMode; label: string; icon: string }[] = [
     { value: 'light', label: 'Light', icon: 'bi-sun' },
@@ -18,6 +19,8 @@
   let sslKeyPath = '';
   let limitMbps = '';
   let cronSchedule = '5 * * * *';
+  /** Narrows the Ookla server dropdown when many servers are loaded */
+  let ooklaListFilter = '';
   let iperfDurationSeconds = 10;
   let ooklaServers: { id: string; label: string }[] = [];
   let iperfServers: { host: string; label: string }[] = [];
@@ -185,6 +188,38 @@
     return parts.length ? parts.join(' — ') : String(srv.id);
   }
 
+  function groupOoklaByCountry(list: SpeedtestServerOption[]): { country: string; servers: SpeedtestServerOption[] }[] {
+    const m = new Map<string, SpeedtestServerOption[]>();
+    for (const s of list) {
+      const c = (s.country || '').trim() || 'Other';
+      if (!m.has(c)) m.set(c, []);
+      m.get(c)!.push(s);
+    }
+    return Array.from(m.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([country, servers]) => ({
+        country,
+        servers: servers.sort((a, b) => fullServerName(a).localeCompare(fullServerName(b))),
+      }));
+  }
+
+  $: ooklaFiltered = (() => {
+    const q = ooklaListFilter.trim().toLowerCase();
+    let arr = ooklaServerOptions;
+    if (q) {
+      arr = arr.filter((s) => {
+        const hay = `${fullServerName(s)} ${s.id} ${s.country || ''}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    return arr.slice(0, 600);
+  })();
+
+  $: ooklaGrouped = groupOoklaByCountry(ooklaFiltered);
+  /** Large catalog: require typing to avoid rendering thousands of option nodes */
+  $: ooklaNeedsFilter =
+    ooklaServerOptions.length > 400 && ooklaListFilter.trim().length === 0;
+
   function onOoklaServerSelect(i: number, value: string) {
     const opt = value === 'auto' || value === 'local' ? null : ooklaServerOptions.find((s) => String(s.id) === value);
     let newLabel = ooklaServers[i]?.label || '';
@@ -205,7 +240,7 @@
       sslCertPath = c.ssl_cert_path || '';
       sslKeyPath = c.ssl_key_path || '';
       limitMbps = c.speedtest_limit_mbps != null ? String(c.speedtest_limit_mbps) : '';
-      cronSchedule = (c.cron_schedule || '5 * * * *').trim();
+      cronSchedule = normalizeCronToPreset((c.cron_schedule || '5 * * * *').trim());
       const d = Number(c.iperf_duration_seconds);
       iperfDurationSeconds = (!Number.isNaN(d) && d >= 1 && d <= 300) ? d : 10;
       ooklaServers = ooklaToForm((c.ookla_servers as OoklaServer[]) || []);
@@ -291,7 +326,7 @@
         ssl_cert_path: str(sslCertPath).trim(),
         ssl_key_path: str(sslKeyPath).trim(),
         speedtest_limit_mbps: limit,
-        cron_schedule: str(cronSchedule).trim() || '5 * * * *',
+        cron_schedule: normalizeCronToPreset(str(cronSchedule).trim() || '5 * * * *'),
         iperf_duration_seconds: duration,
         ookla_servers: formToOokla(ooklaServers),
         ookla_local_patterns: parseOoklaPatterns(ooklaLocalPatternsText),
@@ -427,63 +462,59 @@
   </div>
 </div>
 
-<div class="card">
-  <div class="card-header">Configuration</div>
+<form on:submit|preventDefault={save} aria-label="Configuration form">
+<div class="card mb-4">
+  <div class="card-header">Site &amp; HTTPS</div>
   <div class="card-body">
-    <form on:submit|preventDefault={save} aria-label="Configuration form">
-    <p class="text-muted small mb-4">All settings are configured from this page. Use <strong>Setup</strong> to install Ookla and iperf3 on the server, then configure servers and tests here.</p>
-
+    <p class="text-muted small mb-3">Public URL and certificate paths for reverse proxy / TLS (optional if you only use IP:port).</p>
     <div class="mb-3">
-      <label class="form-label" for="site-url">Site URL (HTTPS)</label>
-      <p class="form-text text-muted small">URL only, no port (e.g. https://host.example.com/netperf/).</p>
-      <input id="site-url" type="url" class="form-control form-control-sm" bind:value={siteUrl} placeholder="https://hyperionsolutionsgroup.com/netperf/" />
+      <label class="form-label" for="site-url">Public site URL</label>
+      <p class="form-text text-muted small mb-1">HTTPS URL visitors use, no port (example: <code>https://monitor.example.com/netperf/</code>).</p>
+      <input id="site-url" type="url" class="form-control form-control-sm" bind:value={siteUrl} placeholder="https://example.com/netperf/" />
     </div>
     <div class="mb-3">
-      <label class="form-label" for="ssl-cert">SSL certificate path</label>
+      <label class="form-label" for="ssl-cert">TLS certificate file</label>
+      <p class="form-text text-muted small mb-1">Full path to PEM bundle (often Let’s Encrypt <code>fullchain.pem</code>).</p>
       <input id="ssl-cert" type="text" class="form-control form-control-sm font-monospace" bind:value={sslCertPath} placeholder="/etc/letsencrypt/live/domain/fullchain.pem" />
     </div>
-    <div class="mb-3">
-      <label class="form-label" for="ssl-key">SSL key path</label>
+    <div class="mb-0">
+      <label class="form-label" for="ssl-key">TLS private key file</label>
+      <p class="form-text text-muted small mb-1">Full path to PEM key (often <code>privkey.pem</code>).</p>
       <input id="ssl-key" type="text" class="form-control form-control-sm font-monospace" bind:value={sslKeyPath} placeholder="/etc/letsencrypt/live/domain/privkey.pem" />
     </div>
-    <div class="mb-3">
-      <label class="form-label" for="limit-mbps">Speedtest limit (Mbps)</label>
-      <p class="form-text text-muted small">Optional. Leave empty for no limit.</p>
-      <input id="limit-mbps" type="number" class="form-control form-control-sm" style="max-width:120px" min="1" bind:value={limitMbps} placeholder="No limit" />
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Scheduled tests</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      How often automated runs happen when you start the schedule on the <strong>Scheduler</strong> page. Times use the server’s clock.
+    </p>
+    <div class="mb-0">
+      <label class="form-label" for="cron-preset">Run frequency</label>
+      <select id="cron-preset" class="form-select form-select-sm" style="max-width:28rem" bind:value={cronSchedule}>
+        {#each CRON_PRESETS as p}
+          <option value={p.cron}>{p.label} — {p.detail}</option>
+        {/each}
+      </select>
     </div>
-    <div class="mb-3">
-      <label class="form-label" for="cron">Cron schedule</label>
-      <p class="form-text text-muted small">When the scheduler is started, tests run at this time (e.g. <code>5 * * * *</code> = 5 min past every hour).</p>
-      <input id="cron" type="text" class="form-control form-control-sm font-monospace" style="max-width:200px" bind:value={cronSchedule} placeholder="5 * * * *" />
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Speedtest (Ookla)</div>
+  <div class="card-body">
+    <div class="mb-4">
+      <label class="form-label" for="limit-mbps">Cap download speed (Mbps)</label>
+      <p class="form-text text-muted small mb-1">Optional. Uses <code>trickle</code> when installed so tests don’t saturate the link. Leave empty for full speed.</p>
+      <input id="limit-mbps" type="number" class="form-control form-control-sm" style="max-width:120px" min="1" bind:value={limitMbps} placeholder="No cap" />
     </div>
 
-    <hr class="my-4" />
-    <h2 class="h6 mb-3">Probe identity (ISP / multi-site)</h2>
-    <p class="form-text text-muted small mb-2">Identify this probe for aggregation and reporting. Optional.</p>
-    <div class="row g-2 mb-3">
-      <div class="col-md-3">
-        <label class="form-label small" for="probe-id">Probe ID</label>
-        <input id="probe-id" type="text" class="form-control form-control-sm" bind:value={probeId} placeholder="e.g. pop-chicago-1" />
-      </div>
-      <div class="col-md-3">
-        <label class="form-label small" for="location-name">Location name</label>
-        <input id="location-name" type="text" class="form-control form-control-sm" bind:value={locationName} placeholder="e.g. Chicago POP" />
-      </div>
-      <div class="col-md-2">
-        <label class="form-label small" for="region">Region</label>
-        <input id="region" type="text" class="form-control form-control-sm" bind:value={region} placeholder="e.g. Midwest" />
-      </div>
-      <div class="col-md-2">
-        <label class="form-label small" for="tier">Tier</label>
-        <input id="tier" type="text" class="form-control form-control-sm" bind:value={tier} placeholder="e.g. 1G" />
-      </div>
-    </div>
-
-    <hr class="my-4" />
-    <h2 class="h6 mb-3">Ookla Speedtest servers</h2>
-    <p class="form-text text-muted small mb-2">
-      <strong>Local (ISP)</strong> is the default for ISPs: no patterns required. It uses Ookla's server list, optionally matches your line's ISP name (auto-detected, cached 7 days), then picks the smallest distance (km).
-      <strong>Auto</strong> is a second run using Ookla's built-in server choice (good as a cross-check). Add more rows for specific server IDs if you want.
+    <h2 class="h6 mb-2">Which Speedtest servers to use</h2>
+    <p class="form-text text-muted small mb-3">
+      <strong>Local (ISP)</strong> picks a nearby server that matches your provider when possible.
+      <strong>Auto</strong> lets Ookla choose (good for comparison). You can add specific servers from the list below (search by city, country, or provider).
     </p>
     <div class="form-check mb-3">
       <input class="form-check-input" type="checkbox" id="ookla-auto-isp" bind:checked={ooklaLocalAutoIsp} />
@@ -502,46 +533,106 @@
       <p class="form-text text-muted small mb-0">If set, <strong>only</strong> these substrings are used for <strong>Local (ISP)</strong> rows (auto-detect is skipped). Matches name, location, host, or sponsor.</p>
     </div>
     {#if ooklaOptionsError}
-      <p class="small text-warning mb-2">Server list: {ooklaOptionsError}. You can still enter a server ID manually below.</p>
+      <p class="small text-warning mb-2">{ooklaOptionsError} You can type a numeric server ID in the box if the list fails.</p>
     {/if}
-    <div class="ookla-list mb-4">
+    <div class="mb-2">
+      <label class="form-label small" for="ookla-filter">Search servers</label>
+      <input
+        id="ookla-filter"
+        type="search"
+        class="form-control form-control-sm mb-1"
+        placeholder="City, country, provider, or server ID…"
+        bind:value={ooklaListFilter}
+        autocomplete="off"
+        disabled={ooklaOptionsLoading}
+      />
+      <p class="form-text text-muted small mb-2">
+        {#if ooklaServerOptions.length > 0}
+          Showing {ooklaFiltered.length} of {ooklaServerOptions.length} servers
+          {#if ooklaNeedsFilter}(type above to narrow){/if}.
+        {:else}
+          List loads from Ookla on this machine (and Speedtest.net when online).
+        {/if}
+      </p>
+    </div>
+    <div class="ookla-list mb-3">
       {#each ooklaServers as row, i}
         <div class="row g-2 align-items-center mb-2">
           <div class="col-md-5">
             {#if ooklaOptionsLoading}
               <select class="form-select form-select-sm" disabled><option>Loading servers…</option></select>
             {:else if ooklaServerOptions.length > 0}
-              <select
-                class="form-select form-select-sm"
-                value={row.id}
-                on:change={(e) => onOoklaServerSelect(i, e.currentTarget.value)}
-              >
-                <option value="local">Local (ISP / nearest match)</option>
-                <option value="auto">Auto (Ookla default)</option>
-                {#each ooklaServerOptions as srv}
-                  <option value={srv.id}>{fullServerName(srv)}</option>
-                {/each}
-              </select>
+              {#if ooklaNeedsFilter}
+                <select class="form-select form-select-sm" disabled aria-disabled="true">
+                  <option>Type in the search box above to narrow the list…</option>
+                </select>
+              {:else}
+                <select
+                  class="form-select form-select-sm"
+                  value={row.id}
+                  on:change={(e) => onOoklaServerSelect(i, e.currentTarget.value)}
+                >
+                  <option value="local">Local (ISP / nearest match)</option>
+                  <option value="auto">Auto (Ookla default)</option>
+                  {#each ooklaGrouped as g}
+                    <optgroup label={g.country}>
+                      {#each g.servers as srv}
+                        <option value={srv.id}>{fullServerName(srv)}</option>
+                      {/each}
+                    </optgroup>
+                  {/each}
+                </select>
+              {/if}
             {:else}
-              <input type="text" class="form-control form-control-sm" placeholder="local, auto, or server ID" bind:value={row.id} />
+              <input type="text" class="form-control form-control-sm" placeholder="local, auto, or numeric server ID" bind:value={row.id} />
             {/if}
           </div>
           <div class="col-md-4">
-            <input type="text" class="form-control form-control-sm" placeholder="Label" bind:value={row.label} />
+            <input type="text" class="form-control form-control-sm" placeholder="Label shown in graphs" bind:value={row.label} />
           </div>
           <div class="col-auto">
             <button type="button" class="btn btn-outline-danger btn-sm" on:click={() => removeOokla(i)} title="Remove"><i class="bi bi-dash-lg"></i></button>
           </div>
         </div>
       {/each}
-      <button type="button" class="btn btn-outline-primary btn-sm" on:click={addOokla}><i class="bi bi-plus-lg me-1"></i> Add server</button>
+      <button type="button" class="btn btn-outline-primary btn-sm" on:click={addOokla}><i class="bi bi-plus-lg me-1"></i> Add row</button>
       {#if ooklaServerOptions.length > 0 && !ooklaOptionsLoading}
-        <button type="button" class="btn btn-link btn-sm ms-2" on:click={loadOoklaOptions}>Refresh server list</button>
+        <button type="button" class="btn btn-link btn-sm ms-2" on:click={loadOoklaOptions}>Reload server list</button>
       {/if}
     </div>
+  </div>
+</div>
 
-    <hr class="my-4" />
-    <h2 class="h6 mb-3">iperf3</h2>
+<div class="card mb-4">
+  <div class="card-header">Probe identity</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">Labels this installation in reports and multi-site views. All optional.</p>
+    <div class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label small" for="probe-id">Probe ID</label>
+        <input id="probe-id" type="text" class="form-control form-control-sm" bind:value={probeId} placeholder="e.g. pop-chicago-1" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small" for="location-name">Site / location name</label>
+        <input id="location-name" type="text" class="form-control form-control-sm" bind:value={locationName} placeholder="e.g. Chicago POP" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="region">Region</label>
+        <input id="region" type="text" class="form-control form-control-sm" bind:value={region} placeholder="e.g. Midwest" />
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small" for="tier">Tier</label>
+        <input id="tier" type="text" class="form-control form-control-sm" bind:value={tier} placeholder="e.g. 1G" />
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">iperf3</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">Throughput tests to remote iperf3 hosts (separate from Ookla).</p>
+    <h2 class="h6 mb-2">Test length</h2>
     <div class="row g-2 align-items-center mb-3">
       <div class="col-auto">
         <label for="iperf-duration" class="form-label small mb-0">Test duration (seconds)</label>
@@ -553,8 +644,8 @@
         <span class="small text-muted">1–300. Each iperf3 run will last this long.</span>
       </div>
     </div>
-    <h2 class="h6 mb-3">iperf3 servers</h2>
-    <p class="form-text text-muted small mb-2">Hostname or IP of iperf3 servers to test against. Add from public presets (from <a href="https://iperf.fr/iperf-servers.php" target="_blank" rel="noopener noreferrer">iperf.fr</a>) or enter your own.</p>
+    <h2 class="h6 mb-2">Remote hosts</h2>
+    <p class="form-text text-muted small mb-2">Enter hostname or IP, or pick a public host from the list (sourced from <a href="https://iperf.fr/iperf-servers.php" target="_blank" rel="noopener noreferrer">iperf.fr</a>).</p>
     <div class="iperf-servers-list mb-4">
       {#each iperfServers as row, i}
         <div class="row g-2 align-items-center mb-2">
@@ -586,8 +677,8 @@
     </div>
 
     <hr class="my-4" />
-    <h2 class="h6 mb-3">iperf3 tests</h2>
-    <p class="form-text text-muted small mb-2">Test profiles: name and iperf3 client args (e.g. <code>-P 1</code>, <code>-u -b 1G</code>).</p>
+    <h2 class="h6 mb-2">Test profiles</h2>
+    <p class="form-text text-muted small mb-2">Each profile is one iperf3 run. “Args” are passed to the iperf3 client (examples: <code>-P 4</code> parallel streams, <code>-u -b 500M</code> UDP).</p>
     <div class="iperf-tests-list mb-4">
       {#each iperfTests as row, i}
         <div class="row g-2 align-items-center mb-2">
@@ -604,55 +695,59 @@
       {/each}
       <button type="button" class="btn btn-outline-primary btn-sm" on:click={addIperfTest}><i class="bi bi-plus-lg me-1"></i> Add test</button>
     </div>
+  </div>
+</div>
 
-    <hr class="my-4" />
-    <h2 class="h6 mb-3">SLA &amp; alerts</h2>
-    <p class="form-text text-muted small mb-2">When results fall below these thresholds, a webhook is fired (15 min cooldown). Leave empty to disable.</p>
-    <div class="row g-2 mb-2">
+<div class="card mb-4">
+  <div class="card-header">SLA &amp; alerts</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">Alert when measured speed or latency crosses these limits. Sends a POST to your webhook (at most once every 15 minutes).</p>
+    <div class="row g-2 mb-3">
       <div class="col-auto">
-        <label class="form-label small mb-0" for="sla-min-down">Min download (Mbps)</label>
+        <label class="form-label small mb-0" for="sla-min-down">Minimum download (Mbps)</label>
         <input id="sla-min-down" type="number" min="0" class="form-control form-control-sm" style="width:6rem" bind:value={slaMinDownloadMbps} placeholder="—" />
       </div>
       <div class="col-auto">
-        <label class="form-label small mb-0" for="sla-min-up">Min upload (Mbps)</label>
+        <label class="form-label small mb-0" for="sla-min-up">Minimum upload (Mbps)</label>
         <input id="sla-min-up" type="number" min="0" class="form-control form-control-sm" style="width:6rem" bind:value={slaMinUploadMbps} placeholder="—" />
       </div>
       <div class="col-auto">
-        <label class="form-label small mb-0" for="sla-max-lat">Max latency (ms)</label>
+        <label class="form-label small mb-0" for="sla-max-lat">Maximum latency (ms)</label>
         <input id="sla-max-lat" type="number" min="0" class="form-control form-control-sm" style="width:6rem" bind:value={slaMaxLatencyMs} placeholder="—" />
       </div>
     </div>
     <div class="mb-2">
       <label class="form-label small" for="webhook-url">Webhook URL</label>
-      <input id="webhook-url" type="url" class="form-control form-control-sm font-monospace" bind:value={webhookUrl} placeholder="https://…" />
+      <input id="webhook-url" type="url" class="form-control form-control-sm font-monospace" bind:value={webhookUrl} placeholder="https://your-automation.example/hooks/netperf" />
     </div>
     <div class="mb-3">
-      <label class="form-label small" for="webhook-secret">Webhook secret (optional)</label>
-      <input id="webhook-secret" type="password" class="form-control form-control-sm font-monospace" style="max-width:280px" bind:value={webhookSecret} placeholder="Sent as X-Webhook-Secret header" autocomplete="off" />
+      <label class="form-label small" for="webhook-secret">Shared secret (optional)</label>
+      <input id="webhook-secret" type="password" class="form-control form-control-sm font-monospace" style="max-width:280px" bind:value={webhookSecret} placeholder="Verifies requests (X-Webhook-Secret header)" autocomplete="off" />
     </div>
-    <div class="mb-3">
-      <button type="button" class="btn btn-outline-secondary btn-sm" on:click={checkSlaNow} disabled={checkSlaLoading} title="Run SLA evaluation now (compare latest results to thresholds, fire webhook if violated)">
-        {checkSlaLoading ? 'Checking…' : 'Check SLA now'}
-      </button>
-    </div>
-
-    <hr class="my-4" />
-    <h2 class="h6 mb-3">Data retention</h2>
-    <p class="form-text text-muted small mb-2">Keep data for this many days. When using <strong>Purge old data</strong> in Setup without a custom days value, this is used (empty = 30).</p>
-    <div class="mb-3">
-      <label class="form-label small" for="retention-days">Retention (days)</label>
-      <input id="retention-days" type="number" min="1" max="365" class="form-control form-control-sm" style="width:6rem" bind:value={retentionDays} placeholder="e.g. 90 or empty" />
-    </div>
-
-    <div class="d-flex flex-wrap align-items-center gap-2">
-      <button type="submit" class="btn btn-primary">
-        <i class="bi bi-check-lg me-1"></i> Save configuration
-      </button>
-      <span class="small" class:text-success={messageType === 'success'} class:text-danger={messageType === 'danger'}>{message}</span>
-    </div>
-    </form>
+    <button type="button" class="btn btn-outline-secondary btn-sm" on:click={checkSlaNow} disabled={checkSlaLoading} title="Evaluate latest results against thresholds now">
+      {checkSlaLoading ? 'Checking…' : 'Run SLA check now'}
+    </button>
   </div>
 </div>
+
+<div class="card mb-4">
+  <div class="card-header">Data retention</div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">How long to keep raw results. <strong>Purge old data</strong> in Setup uses this when no custom day count is entered (empty here defaults to 30 days in the purge action).</p>
+    <div class="mb-0">
+      <label class="form-label small" for="retention-days">Keep data (days)</label>
+      <input id="retention-days" type="number" min="1" max="365" class="form-control form-control-sm" style="width:6rem" bind:value={retentionDays} placeholder="e.g. 90" />
+    </div>
+  </div>
+</div>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-4">
+  <button type="submit" class="btn btn-primary">
+    <i class="bi bi-check-lg me-1"></i> Save configuration
+  </button>
+  <span class="small" class:text-success={messageType === 'success'} class:text-danger={messageType === 'danger'}>{message}</span>
+</div>
+</form>
 
 <style>
   :global(.card) { border-radius: var(--radius-lg); }

@@ -71,7 +71,7 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
    sudo netperf-scheduler start   # run tests per cron_schedule in config (default :05 every hour), log under /var/log/netperf/YYYYMMDD
    sudo netperf-scheduler stop     # remove schedule
    ```
-   Or use **Scheduler** in the web UI to start/stop. The cron schedule is configurable in **Settings** (e.g. `5 * * * *`).
+   Or use **Scheduler** in the web UI to start/stop. In **Settings**, pick a **run frequency** (once per hour, once per day, or four times per day); the app stores the matching cron expression in config.
 
 5. **Web interface** (if installed)
    - Open the **Site URL** from Settings (e.g. `https://your-server.netperf/`). Use HTTPS with no port in the URL; run `sudo ./web/setup-https.sh` on the server once to enable it.

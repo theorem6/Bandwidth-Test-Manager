@@ -401,6 +401,8 @@ export interface SpeedtestServerOption {
   id: number;
   name: string;
   location: string;
+  /** Country name when list comes from Speedtest.net API (used for grouping). */
+  country?: string;
 }
 
 export async function getSpeedtestServers(): Promise<{ servers: SpeedtestServerOption[]; error?: string }> {
