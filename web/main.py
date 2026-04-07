@@ -93,6 +93,16 @@ CONFIG_PATH = Path(os.environ.get("NETPERF_CONFIG", "/etc/netperf/config.json"))
 app = FastAPI(title="Bandwidth Test Manager", docs_url=None, redoc_url=None)
 
 
+@app.middleware("http")
+async def rewrite_netperf_static_prefix(request: Request, call_next):
+    """Vite uses base /netperf/static/; only /static is mounted. Rewrite before routing."""
+    if request.scope.get("type") == "http":
+        path = request.scope.get("path") or ""
+        if path.startswith("/netperf/static"):
+            request.scope["path"] = "/static" + path[len("/netperf/static") :]
+    return await call_next(request)
+
+
 class NoCacheStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: Any) -> Any:
         response = await super().get_response(path, scope)
@@ -105,9 +115,8 @@ class NoCacheStaticFiles(StaticFiles):
 static_dir = APP_DIR / "static"
 if static_dir.exists():
     (static_dir / "uploads").mkdir(parents=True, exist_ok=True)
-    # Vite base is /netperf/static/ — nginx strips /netperf when proxying; direct Uvicorn needs both paths.
+    # Vite base is /netperf/static/; middleware rewrites to /static (single mount works everywhere).
     app.mount("/static", NoCacheStaticFiles(directory=str(static_dir)), name="static")
-    app.mount("/netperf/static", NoCacheStaticFiles(directory=str(static_dir)), name="netperf_static")
 
 _BRANDING_KEYS = (
     "app_title",
