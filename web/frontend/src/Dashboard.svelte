@@ -707,7 +707,7 @@
       {/if}
       {#if selectedDate && connected && speedtestSitesBeforeTimeFilter.length === 0 && iperfSitesBeforeTimeFilter.length > 0}
         <p class="small text-warning mb-0 mt-2" role="status">
-          iperf3 has data for this day but Speedtest does not. Add at least one row under <strong>Settings → Speedtest (Ookla)</strong> (e.g. Local or Auto), confirm the Ookla CLI is installed, then run tests again. New installs also run one Auto Speedtest when that list is empty.
+          iperf3 has data for this day but Speedtest does not. Add rows under <strong>Settings → Speedtest (Ookla)</strong>, redeploy <code class="small">/bin/netperf-tester</code> from the repo, then run tests again. <strong>Scheduled (cron) runs</strong> often use a minimal <code class="small">PATH</code> and never find <code class="small">speedtest</code> in <code class="small">/usr/local/bin</code> — the latest script sets PATH and prefers that binary; a shell login may still find it even when cron did not.
         </p>
       {/if}
       {#if datesError}

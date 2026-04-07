@@ -34,6 +34,9 @@ HELP() {
 
 ### Start subroutine ###
 START() {
+	# Non-login shells (cron, systemd) often omit /usr/local/bin; Ookla CLI installs there.
+	export PATH="/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 	if [ ! -d "$STORAGE_LOCATION" ]; then
 		mkdir -p "$STORAGE_LOCATION"
 	fi
@@ -46,48 +49,60 @@ START() {
 		echo -e "ERROR: jq is required to read config.\n"; exit 1
 	fi
 
+	# Prefer official Ookla binary (matches web/main.py and netperf-resolve-ookla-local).
+	if [ -x /usr/local/bin/speedtest ]; then
+		SPEEDTEST_BIN=/usr/local/bin/speedtest
+	elif command -v speedtest >/dev/null 2>&1; then
+		SPEEDTEST_BIN=$(command -v speedtest)
+	else
+		SPEEDTEST_BIN=""
+		echo "netperf-tester: speedtest not found in PATH (cron often lacks /usr/local/bin). iperf will still run." >&2
+	fi
+
 	# Optional speed limit in Mbps (applied via trickle if available)
 	LIMIT_MBPS=$(jq -r '.speedtest_limit_mbps // empty' "$CONFIG_FILE")
-	SPEEDTEST_CMD="speedtest"
-	if [ -n "$LIMIT_MBPS" ] && [ "$LIMIT_MBPS" != "null" ]; then
+	SPEEDTEST_CMD="${SPEEDTEST_BIN:-}"
+	if [ -n "$SPEEDTEST_BIN" ] && [ -n "$LIMIT_MBPS" ] && [ "$LIMIT_MBPS" != "null" ]; then
 		# trickle uses KB/s: Mbps * 1000 / 8 = KB/s
 		LIMIT_KBPS=$(awk "BEGIN { printf \"%.0f\", ($LIMIT_MBPS * 1000) / 8 }")
 		if command -v trickle >/dev/null 2>&1; then
-			SPEEDTEST_CMD="trickle -d $LIMIT_KBPS -u $LIMIT_KBPS speedtest"
+			SPEEDTEST_CMD="trickle -d $LIMIT_KBPS -u $LIMIT_KBPS $SPEEDTEST_BIN"
 		fi
 	fi
 
 	# Ookla Speedtest: run each server from config. If ookla_servers is empty, run one Auto test
 	# so scheduled runs still produce Speedtest data when only iperf is explicitly configured.
-	OOKLA_N=$(jq '.ookla_servers // [] | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
-	if [ "${OOKLA_N:-0}" -eq 0 ]; then
-		outfile="$STORAGE_LOCATION/0_speedtest-auto"
-		$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
-	else
-		idx=0
-		while true; do
-			id=$(jq -r --argjson i "$idx" '.ookla_servers[$i].id // empty' "$CONFIG_FILE")
-			label=$(jq -r --argjson i "$idx" '.ookla_servers[$i].label // empty' "$CONFIG_FILE")
-			[ -z "$id" ] && break
-			outfile="$STORAGE_LOCATION/${idx}_speedtest-$(echo "$label" | tr '[:upper:]' '[:lower:]')"
-			if [ "$id" = "auto" ]; then
-				$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
-			elif [ "$id" = "local" ]; then
-				RESOLVED=""
-				if command -v netperf-resolve-ookla-local >/dev/null 2>&1; then
-					RESOLVED=$(netperf-resolve-ookla-local "$CONFIG_FILE" 2>/dev/null || true)
-				fi
-				if [ -n "$RESOLVED" ]; then
-					$SPEEDTEST_CMD -s "$RESOLVED" -f json >> "$outfile" 2>/dev/null || true
-				else
+	if [ -n "$SPEEDTEST_BIN" ]; then
+		OOKLA_N=$(jq '.ookla_servers // [] | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
+		if [ "${OOKLA_N:-0}" -eq 0 ]; then
+			outfile="$STORAGE_LOCATION/0_speedtest-auto"
+			$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+		else
+			idx=0
+			while true; do
+				id=$(jq -r --argjson i "$idx" '.ookla_servers[$i].id // empty' "$CONFIG_FILE")
+				label=$(jq -r --argjson i "$idx" '.ookla_servers[$i].label // empty' "$CONFIG_FILE")
+				[ -z "$id" ] && break
+				outfile="$STORAGE_LOCATION/${idx}_speedtest-$(echo "$label" | tr '[:upper:]' '[:lower:]')"
+				if [ "$id" = "auto" ]; then
 					$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+				elif [ "$id" = "local" ]; then
+					RESOLVED=""
+					if command -v netperf-resolve-ookla-local >/dev/null 2>&1; then
+						RESOLVED=$(netperf-resolve-ookla-local "$CONFIG_FILE" 2>/dev/null || true)
+					fi
+					if [ -n "$RESOLVED" ]; then
+						$SPEEDTEST_CMD -s "$RESOLVED" -f json >> "$outfile" 2>/dev/null || true
+					else
+						$SPEEDTEST_CMD -f json >> "$outfile" 2>/dev/null || true
+					fi
+				else
+					$SPEEDTEST_CMD -s "$id" -f json >> "$outfile" 2>/dev/null || true
 				fi
-			else
-				$SPEEDTEST_CMD -s "$id" -f json >> "$outfile" 2>/dev/null || true
-			fi
-			sleep 10
-			idx=$((idx + 1))
-		done
+				sleep 10
+				idx=$((idx + 1))
+			done
+		fi
 	fi
 
 	# iperf3: run each server × each test from config (duration from config, default 10s)
