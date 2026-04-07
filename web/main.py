@@ -93,6 +93,17 @@ CONFIG_PATH = Path(os.environ.get("NETPERF_CONFIG", "/etc/netperf/config.json"))
 app = FastAPI(title="Bandwidth Test Manager", docs_url=None, redoc_url=None)
 
 
+@app.middleware("http")
+async def netperf_api_path_middleware(request: Request, call_next):
+    """Rewrite /netperf/api/* → /api/* so routes match when the SPA is opened at /netperf/ on Uvicorn
+    (e.g. http://host:8080/netperf/). Nginx configs that strip the /netperf/ prefix already send /api/*."""
+    path = request.scope.get("path") or ""
+    if path == "/netperf/api" or path.startswith("/netperf/api/"):
+        request.scope["path"] = path[len("/netperf") :]
+        request.scope["raw_path"] = request.scope["path"].encode("latin-1")
+    return await call_next(request)
+
+
 class NoCacheStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: Any) -> Any:
         response = await super().get_response(path, scope)
