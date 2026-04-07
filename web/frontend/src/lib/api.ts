@@ -411,8 +411,20 @@ export interface SpeedtestServerOption {
   cc?: string;
 }
 
-export async function getSpeedtestServers(): Promise<{ servers: SpeedtestServerOption[]; error?: string }> {
-  return fetchApi<{ servers: SpeedtestServerOption[]; error?: string }>('/api/speedtest-servers');
+export async function getSpeedtestServers(
+  search?: string,
+  limit = 100
+): Promise<{ servers: SpeedtestServerOption[]; error?: string }> {
+  const p = new URLSearchParams();
+  const s = search?.trim();
+  if (s) {
+    p.set('search', s);
+    p.set('limit', String(Math.min(100, Math.max(1, limit))));
+  }
+  const q = p.toString();
+  return fetchApi<{ servers: SpeedtestServerOption[]; error?: string }>(
+    `/api/speedtest-servers${q ? `?${q}` : ''}`
+  );
 }
 
 // --- Remote nodes (probes that report back to this server) ---

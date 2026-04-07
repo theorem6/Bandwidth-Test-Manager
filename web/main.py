@@ -9,8 +9,9 @@ import shutil
 import socket
 import ssl
 import subprocess
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -816,6 +817,30 @@ def _parse_speedtest_servers_xml(text: str) -> list[dict]:
     return out
 
 
+def _fetch_speedtest_servers_by_search(query: str, limit: int) -> list[dict]:
+    """Live search against Speedtest.net (same API as the website). Max 100 results per request."""
+    qenc = urllib.parse.quote(query.strip(), safe="")
+    lim = max(1, min(limit, 100))
+    urls = [
+        f"https://www.speedtest.net/api/js/servers?engine=js&https_functional=true&limit={lim}&search={qenc}",
+        f"https://www.speedtest.net/api/js/servers?limit={lim}&search={qenc}",
+    ]
+    best: list[dict] = []
+    for url in urls:
+        data = _fetch_speedtest_net_json_urllib(url)
+        if data is None:
+            data = _fetch_speedtest_net_json_curl(url)
+        if data is None:
+            continue
+        rows = _parse_speedtest_net_servers_payload(data)
+        if len(rows) > len(best):
+            best = rows
+    return sorted(
+        best,
+        key=lambda x: (str(x.get("country") or "ZZZ"), str(x.get("name") or ""), int(x["id"])),
+    )
+
+
 def _fetch_speedtest_servers_public_api() -> list[dict]:
     """Large server list from Speedtest.net (geo-based). Supplements Ookla CLI -L (~10–20 nearest).
 
@@ -915,9 +940,30 @@ def _run_speedtest_list(cmd: list[str], env: dict) -> tuple[str, str, int]:
 
 
 @app.get("/api/speedtest-servers")
-def api_speedtest_servers(_user: tuple[str, str] = Depends(get_current_user)):
-    """Return list of Ookla Speedtest servers. Tries JSON first; on crash/failure uses plain speedtest -L.
-    If the default speedtest crashes, tries /usr/local/bin/speedtest (official binary from install-deps)."""
+def api_speedtest_servers(
+    search: Optional[str] = None,
+    limit: int = 100,
+    _user: tuple[str, str] = Depends(get_current_user),
+):
+    """Return list of Ookla Speedtest servers.
+
+    Without **search**: merges Speedtest.net geo catalog + CLI `speedtest -L` (nearest servers).
+
+    With **search**: queries Speedtest.net live (`/api/js/servers?search=…`, up to 100 rows) — not a local filter.
+    """
+    q = (search or "").strip()
+    if q:
+        lim = max(1, min(limit, 100))
+        rows = _fetch_speedtest_servers_by_search(q, lim)
+        if not rows:
+            return JSONResponse(
+                {
+                    "servers": [],
+                    "error": f'No servers matched "{q}" on Speedtest.net. Try another word or a numeric server ID.',
+                }
+            )
+        return JSONResponse({"servers": rows})
+
     env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
     error_note: Optional[str] = None
     servers: list[dict] = []

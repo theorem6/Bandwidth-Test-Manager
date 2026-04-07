@@ -147,11 +147,12 @@
     return raw.map((t) => ({ name: t.name ?? '', args: t.args ?? '' }));
   }
 
-  async function loadOoklaOptions() {
+  /** Full catalog (no search) or live Speedtest.net search results when `search` is set. */
+  async function loadOoklaOptions(search?: string) {
     ooklaOptionsLoading = true;
     ooklaOptionsError = '';
     try {
-      const r = await getSpeedtestServers();
+      const r = await getSpeedtestServers(search);
       ooklaServerOptions = r.servers || [];
       if (r.error) ooklaOptionsError = r.error;
       ooklaFilterEpoch += 1;
@@ -164,22 +165,24 @@
   }
 
   async function applyOoklaSearch() {
-    if (!ooklaOptionsLoading && ooklaServerOptions.length === 0) {
-      onToast('Loading server list…', 'success');
-      await loadOoklaOptions();
-    }
     ooklaSearchQuery = ooklaSearchQuery.trim();
-    ooklaFilterEpoch += 1;
+    await loadOoklaOptions(ooklaSearchQuery || undefined);
     await tick();
-    if (ooklaSearchQuery && ooklaFiltered.length === 0) {
-      onToast('No matches. Try another word, country, or enter a numeric server ID in the row.', 'error');
-      return;
-    }
+    const q = ooklaSearchQuery;
     if (ooklaServerOptions.length > 0) {
-      onToast(`Showing ${ooklaFiltered.length} of ${ooklaServerOptions.length} servers.`, 'success');
-    } else if (!ooklaOptionsLoading) {
       onToast(
-        ooklaOptionsError || 'No server catalog — use Reload server list after installing the Ookla CLI, or type local / auto / a numeric ID.',
+        q
+          ? `Speedtest.net returned ${ooklaServerOptions.length} server(s) for “${q}”.`
+          : `Loaded ${ooklaServerOptions.length} server(s).`,
+        'success'
+      );
+    } else if (ooklaOptionsError) {
+      onToast(ooklaOptionsError, 'error');
+    } else if (q) {
+      onToast('No matches on Speedtest.net. Try another term or enter a numeric server ID.', 'error');
+    } else {
+      onToast(
+        'No server catalog — use Reload server list after installing the Ookla CLI, or type local / auto / a numeric ID.',
         'error'
       );
     }
@@ -221,29 +224,6 @@
     return parts.length ? parts.join(' — ') : String(srv.id);
   }
 
-  /** Everything we can match against (lowercase). Includes id, display name, and raw API fields. */
-  function ooklaSearchHay(s: SpeedtestServerOption): string {
-    const id = String(s.id ?? '');
-    const bits: string[] = [id, fullServerName(s)];
-    for (const k of ['name', 'location', 'country', 'sponsor', 'host', 'cc'] as const) {
-      const v = (s as SpeedtestServerOption & { sponsor?: string; host?: string; cc?: string })[k];
-      if (v != null && String(v).trim()) bits.push(String(v).trim());
-    }
-    return bits.join(' ').toLowerCase();
-  }
-
-  /** Every whitespace-separated token must appear (order-independent), e.g. "chicago il" matches "IL, Chicago". */
-  function ooklaMatchesSearch(s: SpeedtestServerOption, q: string): boolean {
-    const hay = ooklaSearchHay(s);
-    const tokens = q
-      .trim()
-      .toLowerCase()
-      .split(/\s+/)
-      .filter(Boolean);
-    if (tokens.length === 0) return true;
-    return tokens.every((t) => hay.includes(t));
-  }
-
   function groupOoklaByCountry(list: SpeedtestServerOption[]): { country: string; servers: SpeedtestServerOption[] }[] {
     const m = new Map<string, SpeedtestServerOption[]>();
     for (const s of list) {
@@ -259,24 +239,15 @@
       }));
   }
 
-  $: ooklaFiltered = (() => {
-    const q = ooklaSearchQuery.trim().toLowerCase();
-    let arr = ooklaServerOptions;
-    if (q) {
-      arr = arr.filter((s) => ooklaMatchesSearch(s, q));
-    }
-    return arr.slice(0, 600);
-  })();
-
-  /** True if this row's id appears in the filtered dropdown options (local/auto always). */
+  /** True if this row's id appears in the dropdown options (local/auto always). */
   function ooklaIdInFilteredList(id: string): boolean {
     const sid = String(id);
     if (sid === 'local' || sid === 'auto') return true;
-    return ooklaFiltered.some((s) => String(s.id) === sid);
+    return ooklaServerOptions.some((s) => String(s.id) === sid);
   }
 
   /** Include epoch so grouping recomputes after Search forces trim + key bump */
-  $: ooklaGrouped = (ooklaFilterEpoch, groupOoklaByCountry(ooklaFiltered));
+  $: ooklaGrouped = (ooklaFilterEpoch, groupOoklaByCountry(ooklaServerOptions));
 
   function onOoklaServerSelect(i: number, value: string) {
     const opt = value === 'auto' || value === 'local' ? null : ooklaServerOptions.find((s) => String(s.id) === value);
@@ -593,20 +564,6 @@
     {#if ooklaOptionsError}
       <p class="small text-warning mb-2">{ooklaOptionsError} You can type a numeric server ID in the box if the list fails.</p>
     {/if}
-    {#if ooklaServerOptions.length > 0 && ooklaServerOptions.length < 400}
-      <div class="alert alert-warning py-2 small mb-2" role="status">
-        <strong>Limited list ({ooklaServerOptions.length} servers).</strong>
-        Search only applies to servers in this list. If cities never match, allow outbound HTTPS to
-        <code>www.speedtest.net</code> and click <strong>Reload server list</strong>.
-        <span class="d-block mt-1">
-          To pick a server ID by hand: Ookla’s
-          <a href="https://www.speedtest.net/speedtest-servers" target="_blank" rel="noopener noreferrer">Speedtest Server Network</a>
-          is the human overview. The legacy URL
-          <code>speedtest-servers.php</code> opens as <strong>raw XML</strong> in the browser (that is normal) — copy the numeric
-          <strong>id</strong> from each <code>&lt;server …&gt;</code> line into a row below.
-        </span>
-      </div>
-    {/if}
     <div class="mb-2">
       <label class="form-label small" for="ookla-filter">Search servers</label>
       <div class="input-group input-group-sm mb-1" style="max-width: 36rem">
@@ -625,17 +582,19 @@
           class="btn btn-primary"
           on:click|preventDefault|stopPropagation={() => void applyOoklaSearch()}
           disabled={ooklaOptionsLoading}
-          title="Trim text and refresh the server dropdowns"
+          title="Query Speedtest.net (empty = reload full merged list)"
         >
           Search
         </button>
       </div>
       <p class="form-text text-muted small mb-2">
         {#if ooklaServerOptions.length > 0}
-          Showing up to {ooklaFiltered.length} of {ooklaServerOptions.length} servers
-          {ooklaSearchQuery.trim() ? `(matching “${ooklaSearchQuery.trim()}”)` : '(first 600 — type to narrow)'}. Click <strong>Search</strong> or Enter to apply.
+          Showing {ooklaServerOptions.length} server{ooklaServerOptions.length === 1 ? '' : 's'}
+          {ooklaSearchQuery.trim()
+            ? ` from a live Speedtest.net search (“${ooklaSearchQuery.trim()}”, up to 100). Clear the box and Search to load the full merged list.`
+            : ' (full merged list from Speedtest.net + CLI). Type a city or provider and Search to query Speedtest.net directly.'}
         {:else}
-          No server list yet — use <strong>Reload server list</strong> (needs Ookla CLI and HTTPS to speedtest.net). You can still type <code>local</code>, <code>auto</code>, or a numeric ID in each row.
+          No server list yet — use <strong>Reload server list</strong> or <strong>Search</strong> with an empty box (needs Ookla CLI and HTTPS for the full list). You can still type <code>local</code>, <code>auto</code>, or a numeric ID in each row.
         {/if}
       </p>
     </div>
@@ -682,7 +641,13 @@
       {/each}
       <button type="button" class="btn btn-outline-primary btn-sm" on:click={addOokla}><i class="bi bi-plus-lg me-1"></i> Add row</button>
       {#if ooklaServerOptions.length > 0 && !ooklaOptionsLoading}
-        <button type="button" class="btn btn-link btn-sm ms-2" on:click={loadOoklaOptions}>Reload server list</button>
+        <button
+          type="button"
+          class="btn btn-link btn-sm ms-2"
+          on:click={() => loadOoklaOptions(ooklaSearchQuery.trim() || undefined)}
+        >
+          Reload server list
+        </button>
       {/if}
     </div>
   </div>
