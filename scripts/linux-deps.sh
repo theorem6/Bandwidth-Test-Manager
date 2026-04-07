@@ -244,3 +244,74 @@ bwm_install_python_web_packages() {
 bwm_systemd_available() {
 	[ -d /run/systemd/system ] && command -v systemctl &>/dev/null
 }
+
+# Node.js major version (0 if missing)
+bwm_node_major() {
+	if ! command -v node &>/dev/null; then
+		echo 0
+		return
+	fi
+	node -p "parseInt(process.versions.node, 10)" 2>/dev/null || echo 0
+}
+
+# Install Node.js + npm for building the Svelte/Vite frontend (Vite 5 needs Node 18+).
+bwm_install_nodejs_npm() {
+	export DEBIAN_FRONTEND=noninteractive
+	local mj
+	if command -v apt-get &>/dev/null; then
+		apt-get update -qq
+		apt-get install -y ca-certificates curl gnupg
+		apt-get install -y nodejs npm 2>/dev/null || apt-get install -y nodejs
+		mj="$(bwm_node_major)"
+		if [ "${mj:-0}" -lt 18 ] 2>/dev/null; then
+			echo "=== Installing Node.js 20.x from NodeSource (Vite needs Node 18+) ==="
+			curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+			apt-get install -y nodejs
+		fi
+	elif command -v dnf &>/dev/null; then
+		dnf install -y nodejs npm 2>/dev/null || dnf install -y nodejs
+	elif command -v microdnf &>/dev/null; then
+		microdnf install -y nodejs npm 2>/dev/null || microdnf install -y nodejs
+	elif command -v yum &>/dev/null; then
+		yum install -y nodejs npm 2>/dev/null || yum install -y nodejs
+	elif command -v zypper &>/dev/null; then
+		zypper --non-interactive install -y nodejs npm
+	elif command -v apk &>/dev/null; then
+		apk add --no-cache nodejs npm
+	elif command -v pacman &>/dev/null; then
+		pacman -Sy --needed --noconfirm nodejs npm
+	else
+		echo "Could not install Node.js automatically." >&2
+		return 1
+	fi
+	command -v npm &>/dev/null || {
+		echo "npm not found after Node install." >&2
+		return 1
+	}
+	mj="$(bwm_node_major)"
+	if [ "${mj:-0}" -lt 18 ] 2>/dev/null; then
+		echo "Node.js $(node -v 2>/dev/null) is too old; Vite 5 needs Node 18+. Install Node 20+ manually, then re-run." >&2
+		return 1
+	fi
+	echo "Using Node $(node -v), npm $(npm -v)"
+	return 0
+}
+
+# Run npm ci && npm run build in web/frontend (cwd = repo root).
+bwm_build_web_frontend() {
+	local root="${1:?repo root}"
+	local fe="$root/web/frontend"
+	if [ ! -f "$fe/package.json" ]; then
+		echo "Missing $fe/package.json" >&2
+		return 1
+	fi
+	(
+		cd "$fe" || exit 1
+		if [ -f package-lock.json ]; then
+			npm ci
+		else
+			npm install
+		fi
+		npm run build
+	)
+}

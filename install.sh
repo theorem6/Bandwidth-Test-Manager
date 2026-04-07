@@ -1,8 +1,9 @@
 #!/bin/bash
 # Bandwidth Test Manager — full install (CLI + optional web UI)
 # Supports: Debian/Ubuntu, Fedora/RHEL/Rocky/Alma/Amazon Linux, openSUSE/SLES, Alpine, Arch.
+# With web UI: installs Node.js 18+, runs npm ci && npm run build in web/frontend (Vite → web/static/).
 # Run: sudo ./install.sh [--no-web]
-# Remote fetch: BWM_REPO, BWM_REF. Debug: BWM_DEBUG=1
+# Env: BWM_REPO, BWM_REF, BWM_DEBUG=1, SKIP_NPM_BUILD=1 (use committed web/static only; no npm)
 
 set -eu
 export DEBIAN_FRONTEND=noninteractive
@@ -115,6 +116,20 @@ fi
 
 if [ "$INSTALL_WEB" = true ]; then
 	echo "=== Installing web interface ==="
+	if [ "${SKIP_NPM_BUILD:-}" = "1" ] && [ -f "$SCRIPT_DIR/web/static/index.html" ]; then
+		echo "SKIP_NPM_BUILD=1 — using existing web/static (no npm run build)."
+	else
+		echo "=== Node.js + npm (for Vite build) ==="
+		bwm_install_nodejs_npm || {
+			echo "Node.js 18+ required. Install nodejs + npm, then re-run." >&2
+			exit 1
+		}
+		echo "=== npm ci && npm run build → web/static/ ==="
+		bwm_build_web_frontend "$SCRIPT_DIR" || {
+			echo "Frontend build failed. Fix errors above, or set SKIP_NPM_BUILD=1 if web/static is pre-built." >&2
+			exit 1
+		}
+	fi
 	bwm_install_python_web_packages || {
 		echo "Python packages failed; install python3 and pip, then re-run." >&2
 		exit 1

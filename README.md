@@ -4,6 +4,8 @@ Linux-based speedtest utility using **Ookla Speedtest CLI** and **iperf3**, with
 
 **Install targets:** `install.sh` supports **Debian/Ubuntu**, **Fedora / RHEL / Rocky / Alma / Oracle Linux / Amazon Linux** (dnf/yum), **openSUSE / SLES**, **Alpine**, and **Arch** via `scripts/linux-deps.sh`. Other systems need manual packages (see that file). **systemd** is optional: without it, the web UI prints a manual `uvicorn` command.
 
+**Web UI build:** On a full install (not `--no-web`), the script installs **Node.js 18+** and **npm** (Debian/Ubuntu may add **NodeSource 20.x** if the distro package is too old), then runs **`npm ci`** and **`npm run build`** in `web/frontend` so `web/static/` exists before copying to `/opt/netperf-web`. Requires outbound HTTPS for npm registries. To skip (e.g. air-gapped with pre-built `web/static/`): `sudo SKIP_NPM_BUILD=1 ./install.sh`.
+
 See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and usage. For turning this into a vital **ISP tool** (SLAs, alerting, multi-probe, reports), see **[docs/ISP-ROADMAP.md](docs/ISP-ROADMAP.md)**.
 
 ## Quick start (Linux)

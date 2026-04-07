@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/mai
 sudo ./install.sh
 ```
 
-- Installs OS packages via `scripts/linux-deps.sh` (Debian/Ubuntu, Fedora/RHEL family, SUSE, Alpine, Arch), Ookla Speedtest CLI, iperf3, mtr, jq; optional trickle on Debian; copies scripts to `/bin`, creates `/etc/netperf/config.json` from `etc/netperf-config.json`, and installs the web UI under `/opt/netperf-web` (enables **systemd** when present).
+- Installs OS packages via `scripts/linux-deps.sh` (Debian/Ubuntu, Fedora/RHEL family, SUSE, Alpine, Arch), Ookla Speedtest CLI, iperf3, mtr, jq; optional trickle on Debian; copies scripts to `/bin`, creates `/etc/netperf/config.json` from `etc/netperf-config.json`. For the web UI it installs **Node.js 18+** and runs **`npm ci` / `npm run build`** in `web/frontend` (unless `SKIP_NPM_BUILD=1`), then installs Python venv under `/opt/netperf-web` (enables **systemd** when present).
 - Use `sudo ./install.sh --no-web` to skip the web interface.
 - Web port is configurable: set `PORT=8081` (or other) before running to use a different port (e.g. if 8080 is in use).
 
