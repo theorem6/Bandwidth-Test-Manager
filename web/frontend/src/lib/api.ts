@@ -399,10 +399,16 @@ export async function getRunStatus(): Promise<RunStatusResponse> {
 
 export interface SpeedtestServerOption {
   id: number;
-  name: string;
-  location: string;
+  /** May be missing if the CLI/API returns sparse rows. */
+  name?: string;
+  location?: string;
   /** Country name when list comes from Speedtest.net API (used for grouping). */
   country?: string;
+  /** Some Ookla JSON rows use sponsor vs name — backend may send either. */
+  sponsor?: string;
+  host?: string;
+  /** ISO country code from Speedtest.net catalog (e.g. US). */
+  cc?: string;
 }
 
 export async function getSpeedtestServers(): Promise<{ servers: SpeedtestServerOption[]; error?: string }> {

@@ -298,6 +298,38 @@ def get_dates(storage: Path) -> list[str]:
     return sorted(dates, reverse=True)
 
 
+def get_speedtest_export_rows(storage: Path, log_date: str) -> list[tuple[Any, ...]]:
+    """All speedtest rows for one day (CSV export). Tuples: site, timestamp, download_bps, upload_bps, latency_ms, probe_id."""
+    conn = _get_conn(storage)
+    try:
+        rows = conn.execute(
+            """
+            SELECT site, timestamp, download_bps, upload_bps, latency_ms, IFNULL(probe_id, '')
+            FROM speedtest_results WHERE log_date = ? ORDER BY timestamp, site
+            """,
+            (log_date,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return list(rows)
+
+
+def get_iperf_export_rows(storage: Path, log_date: str) -> list[tuple[Any, ...]]:
+    """All iperf rows for one day (CSV export). Tuples: site, timestamp, bits_per_sec, probe_id."""
+    conn = _get_conn(storage)
+    try:
+        rows = conn.execute(
+            """
+            SELECT site, timestamp, bits_per_sec, IFNULL(probe_id, '')
+            FROM iperf_results WHERE log_date = ? ORDER BY timestamp, site
+            """,
+            (log_date,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return list(rows)
+
+
 def get_history_speedtest(
     storage: Path, cutoff_ymd: str, probe_id: Optional[str] = None
 ) -> list[dict[str, Any]]:

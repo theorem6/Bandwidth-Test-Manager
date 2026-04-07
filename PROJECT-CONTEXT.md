@@ -21,6 +21,8 @@ curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/mai
 sudo systemctl restart netperf-web
 ```
 
+- **PEP 668 (Debian 12+):** Web dependencies install only into `/opt/netperf-web/venv` via `python3 -m pip`, never system `pip`. After manual edits, refresh with: `sudo /opt/netperf-web/venv/bin/python3 -m pip install -r /opt/netperf-web/requirements.txt` then `sudo systemctl restart netperf-web`.
+
 - Without a complete tree beside `install.sh`, the script fetches sources: **`BWM_SOURCE=archive`** (default) downloads a **GitHub-style tarball** (`BWM_REPO` = HTTPS web root, `BWM_REF` = **branch name** only); **`BWM_SOURCE=git`** runs **`git clone`** (`BWM_REPO` = clone URL, `BWM_REF` = branch, tag, or commit). Git is installed via the OS package manager if missing. Set `BWM_DEBUG=1` for verbose errors.
 - **Private GitLab:** use `pack-release.sh` to produce `dist/*.tar.gz`, and `private-download-install.sh` on the server with `GITLAB_TOKEN` (or `BWM_TARBALL_URL`). See README **Private GitLab / offline bundle**.
 - **Web UI asset paths:** Vite `base` is `/static/`; FastAPI serves `StaticFiles` at `/static/`. Behind nginx with a `/netperf/` location, also proxy `/static/` (see `web/nginx-netperf-path.conf`).

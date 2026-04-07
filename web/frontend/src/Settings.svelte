@@ -164,12 +164,24 @@
   }
 
   async function applyOoklaSearch() {
-    const t = ooklaSearchQuery.trim();
-    ooklaSearchQuery = t;
+    if (!ooklaOptionsLoading && ooklaServerOptions.length === 0) {
+      onToast('Loading server list…', 'success');
+      await loadOoklaOptions();
+    }
+    ooklaSearchQuery = ooklaSearchQuery.trim();
     ooklaFilterEpoch += 1;
     await tick();
-    if (ooklaServerOptions.length > 400 && !t) {
-      onToast('Large server list: type a city, country, or provider, then press Search.', 'error');
+    if (ooklaSearchQuery && ooklaFiltered.length === 0) {
+      onToast('No matches. Try another word, country, or enter a numeric server ID in the row.', 'error');
+      return;
+    }
+    if (ooklaServerOptions.length > 0) {
+      onToast(`Showing ${ooklaFiltered.length} of ${ooklaServerOptions.length} servers.`, 'success');
+    } else if (!ooklaOptionsLoading) {
+      onToast(
+        ooklaOptionsError || 'No server catalog — use Reload server list after installing the Ookla CLI, or type local / auto / a numeric ID.',
+        'error'
+      );
     }
   }
 
@@ -203,8 +215,33 @@
 
   /** Full display name: provider + location (e.g. "Synthesis Health — Council Bluffs, IA") */
   function fullServerName(srv: SpeedtestServerOption): string {
-    const parts = [srv.name, srv.location].filter(Boolean).map((s) => String(s).trim());
+    const parts = [srv.name, srv.location]
+      .map((x) => (x == null ? '' : String(x).trim()))
+      .filter((p) => p.length > 0);
     return parts.length ? parts.join(' — ') : String(srv.id);
+  }
+
+  /** Everything we can match against (lowercase). Includes id, display name, and raw API fields. */
+  function ooklaSearchHay(s: SpeedtestServerOption): string {
+    const id = String(s.id ?? '');
+    const bits: string[] = [id, fullServerName(s)];
+    for (const k of ['name', 'location', 'country', 'sponsor', 'host', 'cc'] as const) {
+      const v = (s as SpeedtestServerOption & { sponsor?: string; host?: string; cc?: string })[k];
+      if (v != null && String(v).trim()) bits.push(String(v).trim());
+    }
+    return bits.join(' ').toLowerCase();
+  }
+
+  /** Every whitespace-separated token must appear (order-independent), e.g. "chicago il" matches "IL, Chicago". */
+  function ooklaMatchesSearch(s: SpeedtestServerOption, q: string): boolean {
+    const hay = ooklaSearchHay(s);
+    const tokens = q
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (tokens.length === 0) return true;
+    return tokens.every((t) => hay.includes(t));
   }
 
   function groupOoklaByCountry(list: SpeedtestServerOption[]): { country: string; servers: SpeedtestServerOption[] }[] {
@@ -226,19 +263,20 @@
     const q = ooklaSearchQuery.trim().toLowerCase();
     let arr = ooklaServerOptions;
     if (q) {
-      arr = arr.filter((s) => {
-        const hay = `${fullServerName(s)} ${s.id} ${s.country || ''}`.toLowerCase();
-        return hay.includes(q);
-      });
+      arr = arr.filter((s) => ooklaMatchesSearch(s, q));
     }
     return arr.slice(0, 600);
   })();
 
+  /** True if this row's id appears in the filtered dropdown options (local/auto always). */
+  function ooklaIdInFilteredList(id: string): boolean {
+    const sid = String(id);
+    if (sid === 'local' || sid === 'auto') return true;
+    return ooklaFiltered.some((s) => String(s.id) === sid);
+  }
+
   /** Include epoch so grouping recomputes after Search forces trim + key bump */
   $: ooklaGrouped = (ooklaFilterEpoch, groupOoklaByCountry(ooklaFiltered));
-
-  /** Large catalog: require a non-empty search before filling the dropdown */
-  $: ooklaNeedsFilter = ooklaServerOptions.length > 400 && !ooklaSearchQuery.trim();
 
   function onOoklaServerSelect(i: number, value: string) {
     const opt = value === 'auto' || value === 'local' ? null : ooklaServerOptions.find((s) => String(s.id) === value);
@@ -555,6 +593,20 @@
     {#if ooklaOptionsError}
       <p class="small text-warning mb-2">{ooklaOptionsError} You can type a numeric server ID in the box if the list fails.</p>
     {/if}
+    {#if ooklaServerOptions.length > 0 && ooklaServerOptions.length < 400}
+      <div class="alert alert-warning py-2 small mb-2" role="status">
+        <strong>Limited list ({ooklaServerOptions.length} servers).</strong>
+        Search only applies to servers in this list. If cities never match, allow outbound HTTPS to
+        <code>www.speedtest.net</code> and click <strong>Reload server list</strong>.
+        <span class="d-block mt-1">
+          To pick a server ID by hand: Ookla’s
+          <a href="https://www.speedtest.net/speedtest-servers" target="_blank" rel="noopener noreferrer">Speedtest Server Network</a>
+          is the human overview. The legacy URL
+          <code>speedtest-servers.php</code> opens as <strong>raw XML</strong> in the browser (that is normal) — copy the numeric
+          <strong>id</strong> from each <code>&lt;server …&gt;</code> line into a row below.
+        </span>
+      </div>
+    {/if}
     <div class="mb-2">
       <label class="form-label small" for="ookla-filter">Search servers</label>
       <div class="input-group input-group-sm mb-1" style="max-width: 36rem">
@@ -580,13 +632,10 @@
       </div>
       <p class="form-text text-muted small mb-2">
         {#if ooklaServerOptions.length > 0}
-          {#if ooklaNeedsFilter}
-            Large list — enter a term above and click <strong>Search</strong> (or press Enter) to fill the dropdowns.
-          {:else}
-            Showing {ooklaFiltered.length} of {ooklaServerOptions.length} servers matching “{ooklaSearchQuery || '(all)'}”.
-          {/if}
+          Showing up to {ooklaFiltered.length} of {ooklaServerOptions.length} servers
+          {ooklaSearchQuery.trim() ? `(matching “${ooklaSearchQuery.trim()}”)` : '(first 600 — type to narrow)'}. Click <strong>Search</strong> or Enter to apply.
         {:else}
-          List loads from Ookla on this machine (and Speedtest.net when online).
+          No server list yet — use <strong>Reload server list</strong> (needs Ookla CLI and HTTPS to speedtest.net). You can still type <code>local</code>, <code>auto</code>, or a numeric ID in each row.
         {/if}
       </p>
     </div>
@@ -597,29 +646,28 @@
             {#if ooklaOptionsLoading}
               <select class="form-select form-select-sm" disabled><option>Loading servers…</option></select>
             {:else if ooklaServerOptions.length > 0}
-              {#if ooklaNeedsFilter}
-                <select class="form-select form-select-sm" disabled aria-disabled="true">
-                  <option>Enter a search above, then click Search…</option>
+              {#key ooklaFilterEpoch}
+                <select
+                  class="form-select form-select-sm"
+                  value={row.id}
+                  on:change={(e) => onOoklaServerSelect(i, e.currentTarget.value)}
+                >
+                  <option value="local">Local (ISP / nearest match)</option>
+                  <option value="auto">Auto (Ookla default)</option>
+                  {#if !ooklaIdInFilteredList(row.id)}
+                    <option value={String(row.id)}>
+                      {row.label?.trim() ? `${row.label} (current)` : `Server ${row.id} (current)`}
+                    </option>
+                  {/if}
+                  {#each ooklaGrouped as g}
+                    <optgroup label={g.country}>
+                      {#each g.servers as srv}
+                        <option value={String(srv.id)}>{fullServerName(srv)}</option>
+                      {/each}
+                    </optgroup>
+                  {/each}
                 </select>
-              {:else}
-                {#key ooklaFilterEpoch}
-                  <select
-                    class="form-select form-select-sm"
-                    value={row.id}
-                    on:change={(e) => onOoklaServerSelect(i, e.currentTarget.value)}
-                  >
-                    <option value="local">Local (ISP / nearest match)</option>
-                    <option value="auto">Auto (Ookla default)</option>
-                    {#each ooklaGrouped as g}
-                      <optgroup label={g.country}>
-                        {#each g.servers as srv}
-                          <option value={String(srv.id)}>{fullServerName(srv)}</option>
-                        {/each}
-                      </optgroup>
-                    {/each}
-                  </select>
-                {/key}
-              {/if}
+              {/key}
             {:else}
               <input type="text" class="form-control form-control-sm" placeholder="local, auto, or numeric server ID" bind:value={row.id} />
             {/if}

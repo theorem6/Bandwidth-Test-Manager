@@ -24,10 +24,12 @@ fi
 
 rm -rf "$WEB_DIR/venv"
 python3 -m venv "$WEB_DIR/venv"
+_VPY="$WEB_DIR/venv/bin/python3"
+"$_VPY" -m pip install -q --upgrade pip setuptools wheel 2>/dev/null || true
 if [ -f "$WEB_DIR/requirements.txt" ]; then
-	"$WEB_DIR/venv/bin/pip" install -q -r "$WEB_DIR/requirements.txt"
+	"$_VPY" -m pip install -q -r "$WEB_DIR/requirements.txt"
 else
-	"$WEB_DIR/venv/bin/pip" install -q "fastapi>=0.109" "uvicorn[standard]>=0.27"
+	"$_VPY" -m pip install -q "fastapi>=0.109" "uvicorn[standard]>=0.27" "certifi>=2024.2.2" "python-multipart>=0.0.9"
 fi
 chmod 755 "$WEB_DIR/main.py"
 
@@ -42,6 +44,7 @@ Type=simple
 WorkingDirectory=$WEB_DIR
 ExecStart=$WEB_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $WEB_PORT
 Restart=on-failure
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=NETPERF_STORAGE=/var/log/netperf
 Environment=NETPERF_CONFIG=/etc/netperf/config.json
 Environment=PORT=$WEB_PORT

@@ -206,10 +206,13 @@ if [ "$INSTALL_WEB" = true ]; then
 	cp -f scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter scripts/netperf-cron-run scripts/netperf-resolve-ookla-local scripts/linux-deps.sh "$WEB_DIR/scripts/" 2>/dev/null || true
 	rm -rf "$WEB_DIR/venv"
 	python3 -m venv "$WEB_DIR/venv"
+	# Always use the venv interpreter (PEP 668: never install into system Python on Debian/Ubuntu).
+	_VPY="$WEB_DIR/venv/bin/python3"
+	"$_VPY" -m pip install -q --upgrade pip setuptools wheel 2>/dev/null || true
 	if [ -f "$WEB_DIR/requirements.txt" ]; then
-		"$WEB_DIR/venv/bin/pip" install -q -r "$WEB_DIR/requirements.txt"
+		"$_VPY" -m pip install -q -r "$WEB_DIR/requirements.txt"
 	else
-		"$WEB_DIR/venv/bin/pip" install -q "fastapi>=0.109" "uvicorn[standard]>=0.27"
+		"$_VPY" -m pip install -q "fastapi>=0.109" "uvicorn[standard]>=0.27" "certifi>=2024.2.2" "python-multipart>=0.0.9"
 	fi
 	chmod 755 "$WEB_DIR/main.py"
 	WEB_PORT="${PORT:-8080}"
@@ -223,6 +226,7 @@ Type=simple
 WorkingDirectory=$WEB_DIR
 ExecStart=$WEB_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $WEB_PORT
 Restart=on-failure
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=NETPERF_STORAGE=/var/log/netperf
 Environment=NETPERF_CONFIG=/etc/netperf/config.json
 Environment=PORT=$WEB_PORT
@@ -240,6 +244,9 @@ EOF
 		echo "systemd not detected. Start manually:"
 		echo "  cd $WEB_DIR && NETPERF_STORAGE=/var/log/netperf NETPERF_CONFIG=/etc/netperf/config.json PORT=$WEB_PORT ./venv/bin/uvicorn main:app --host 0.0.0.0 --port $WEB_PORT"
 	fi
+	echo ""
+	echo "Web UI Python packages live only in $WEB_DIR/venv (PEP 668 — do not use bare pip). To upgrade deps later:"
+	echo "  sudo $WEB_DIR/venv/bin/python3 -m pip install -r $WEB_DIR/requirements.txt"
 else
 	echo "Skipping web install (--no-web)"
 fi

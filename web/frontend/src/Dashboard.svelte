@@ -242,6 +242,17 @@
   $: hasSpeedtest = speedtestSites.length > 0;
   $: hasIperf = iperfSites.length > 0;
   $: hasAnyData = hasSpeedtest || hasIperf;
+  /** Raw points exist for the day, but 6h/12h window removed every point — show a specific message */
+  $: speedtestSitesBeforeTimeFilter = selectedDate
+    ? Object.keys(speedtestData).filter((s) => (speedtestData[s] || []).length > 0)
+    : [];
+  $: iperfSitesBeforeTimeFilter = selectedDate
+    ? Object.keys(iperfData).filter((s) => (iperfData[s] || []).length > 0)
+    : [];
+  $: timeFilterExcludesAllSpeedtest =
+    timeRangeFilter !== 'full' && speedtestSitesBeforeTimeFilter.length > 0 && !hasSpeedtest;
+  $: timeFilterExcludesAllIperf =
+    timeRangeFilter !== 'full' && iperfSitesBeforeTimeFilter.length > 0 && !hasIperf;
 
   function renderChart(
     canvas: HTMLCanvasElement | undefined,
@@ -351,18 +362,14 @@
   }
   async function updateCharts() {
     await tick();
-    // One rAF so canvas is in DOM and laid out; then run heavy chart work in idle/timeout to avoid long rAF handler (violation).
+    // Double rAF: canvas must be mounted and laid out before Chart.js reads chartArea (gradients).
+    // Avoid requestIdleCallback — it can be delayed indefinitely on a busy tab, leaving charts blank.
     return new Promise<void>((resolve) => {
       requestAnimationFrame(() => {
-        const run = () => {
+        requestAnimationFrame(() => {
           doRenderCharts();
           resolve();
-        };
-        if (typeof requestIdleCallback !== 'undefined') {
-          requestIdleCallback(run, { timeout: 150 });
-        } else {
-          setTimeout(run, 0);
-        }
+        });
       });
     });
   }
@@ -402,7 +409,8 @@
   async function loadHistory() {
     historyLoading = true;
     try {
-      historyData = await getHistory(historyDays, probeId);
+      const days = typeof historyDays === 'number' ? historyDays : Number(historyDays) || 30;
+      historyData = await getHistory(days, probeId);
       await tick();
       // Double rAF so trend canvas elements are in DOM and laid out
       await new Promise<void>((resolve) => {
@@ -606,14 +614,20 @@
     }, 0);
   }
 
-  $: selectedDate, probeId;
-  $: if (selectedDate) void loadData();
-  $: if (typeof probeId !== 'undefined') void loadHistory();
-  else { speedtestData = {}; iperfData = {}; }
+  /** Include probeId so node dashboard refetches when switching nodes; loadData reads probeId inside. */
+  $: if (selectedDate) {
+    probeId;
+    void loadData();
+  }
+  /** Trends: reload when node or day range changes (historyDays may be string from the days select). */
+  $: {
+    probeId;
+    historyDays;
+    void loadHistory();
+  }
 
   onMount(() => {
     loadDatesList();
-    loadHistory();
   });
   onDestroy(() => {
     stopRunNowPoll();
@@ -697,6 +711,8 @@
     <div class="card-body">
       {#if !selectedDate}
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">Select a date above to load graphs.</p></div>
+      {:else if timeFilterExcludesAllSpeedtest}
+        <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No Speedtest points in this time window. Set <strong>Range</strong> to <strong>Full day</strong>, or choose last 6h/12h so it includes when tests ran.</p></div>
       {:else if !hasSpeedtest}
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No Speedtest data for this date. Use <strong>Run test now</strong> or the <strong>Scheduler</strong> to run tests.</p></div>
       {:else}
@@ -710,6 +726,8 @@
     <div class="card-body">
       {#if !selectedDate}
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">Select a date above to load graphs.</p></div>
+      {:else if timeFilterExcludesAllSpeedtest}
+        <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No data in this time window — try <strong>Full day</strong>.</p></div>
       {:else if !hasSpeedtest}
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No Speedtest data for this date.</p></div>
       {:else}
@@ -723,6 +741,8 @@
     <div class="card-body">
       {#if !selectedDate}
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">Select a date above to load graphs.</p></div>
+      {:else if timeFilterExcludesAllSpeedtest}
+        <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No data in this time window — try <strong>Full day</strong>.</p></div>
       {:else if !hasSpeedtest}
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No Speedtest data for this date.</p></div>
       {:else}
@@ -740,6 +760,10 @@
       {#if !selectedDate}
         <div class="chart-placeholder">
           <p class="text-muted mb-0">Select a date above to load graphs.</p>
+        </div>
+      {:else if timeFilterExcludesAllIperf}
+        <div class="chart-placeholder">
+          <p class="text-muted mb-0">No iperf3 points in this time window. Set <strong>Range</strong> to <strong>Full day</strong>.</p>
         </div>
       {:else if !hasIperf}
         <div class="chart-placeholder">

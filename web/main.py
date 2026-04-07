@@ -7,9 +7,11 @@ import re
 import secrets
 import shutil
 import socket
+import ssl
 import subprocess
 import urllib.request
 import urllib.error
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -622,42 +624,228 @@ def _parse_speedtest_servers_text(out: str) -> list[dict]:
     return servers
 
 
-def _fetch_speedtest_servers_public_api() -> list[dict]:
-    """Large server list from Speedtest.net (by client geo). Supplements Ookla CLI -L (~10 nearest)."""
-    url = "https://www.speedtest.net/api/js/servers?engine=js&https_functional=true&limit=10000"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; BandwidthTestManager/1.0)",
-            "Accept": "application/json",
-        },
-    )
+def _speedtest_net_entry_to_dict(s: dict) -> Optional[dict]:
+    """Map one Speedtest.net API server object to our catalog row."""
     try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-        data = json.loads(raw)
+        sid = int(str(s.get("id", "")).strip())
+    except (TypeError, ValueError):
+        return None
+    if sid <= 0:
+        return None
+    sponsor = str(s.get("sponsor") or "").strip()
+    city = str(s.get("name") or "").strip()
+    country = str(s.get("country") or "").strip()
+    cc = str(s.get("cc") or "").strip()
+    host = str(s.get("host") or "").strip()
+    loc_parts = [x for x in (city, country) if x]
+    loc = ", ".join(loc_parts)
+    name = sponsor or city or str(sid)
+    return {"id": sid, "name": name, "location": loc, "country": country, "host": host, "cc": cc}
+
+
+def _ssl_context_for_https() -> ssl.SSLContext:
+    """Prefer certifi’s CA bundle — Python may otherwise fail TLS on hosts with incomplete system CAs."""
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
     except Exception:
+        return ssl.create_default_context()
+
+
+_OOKLA_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+)
+
+# systemd services often have a minimal PATH — curl is not always found via which()
+def _curl_executable() -> Optional[str]:
+    w = shutil.which("curl")
+    if w and Path(w).is_file():
+        return w
+    for candidate in ("/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl"):
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _parse_speedtest_net_servers_payload(data: Any) -> list[dict]:
+    """Normalize JSON from Speedtest.net (array or {servers: [...]})."""
+    if isinstance(data, dict) and isinstance(data.get("servers"), list):
+        data = data["servers"]
+    if not isinstance(data, list):
         return []
     out: list[dict] = []
-    if not isinstance(data, list):
-        return out
     for s in data:
         if not isinstance(s, dict):
             continue
-        try:
-            sid = int(str(s.get("id", "")).strip())
-        except (TypeError, ValueError):
-            continue
-        if sid <= 0:
-            continue
-        sponsor = str(s.get("sponsor") or "").strip()
-        city = str(s.get("name") or "").strip()
-        country = str(s.get("country") or "").strip()
-        loc_parts = [x for x in (city, country) if x]
-        loc = ", ".join(loc_parts)
-        name = sponsor or city or str(sid)
-        out.append({"id": sid, "name": name, "location": loc, "country": country})
+        row = _speedtest_net_entry_to_dict(s)
+        if row:
+            out.append(row)
     return out
+
+
+def _fetch_speedtest_net_json_urllib(url: str) -> Any:
+    """GET JSON with browser-like headers and SSL context (some hosts block generic agents)."""
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _OOKLA_UA,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.speedtest.net/",
+            "Origin": "https://www.speedtest.net",
+        },
+    )
+    ctx = _ssl_context_for_https()
+    try:
+        with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        raw = raw.strip()
+        if raw.startswith("<"):
+            return None
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def _curl_ookla_get(url: str, *, accept: str, ipv4: bool = False, max_time_sec: int = 120) -> Optional[str]:
+    """GET body via curl (different TLS/IPv6 behavior than Python on some servers)."""
+    curl_bin = _curl_executable()
+    if not curl_bin:
+        return None
+    args = [
+        curl_bin,
+        "-fsSL",
+        "--max-time",
+        str(max_time_sec),
+        "--retry",
+        "2",
+        "--retry-delay",
+        "1",
+    ]
+    if ipv4:
+        args.append("-4")
+    args += [
+        "-A",
+        _OOKLA_UA,
+        "-H",
+        f"Accept: {accept}",
+        "-H",
+        "Referer: https://www.speedtest.net/",
+        "-H",
+        "Origin: https://www.speedtest.net",
+        url,
+    ]
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=max_time_sec + 15)
+        if r.returncode != 0 or not (r.stdout or "").strip():
+            return None
+        return r.stdout
+    except Exception:
+        return None
+
+
+def _fetch_speedtest_net_json_curl(url: str) -> Any:
+    """Try curl with default routing, then IPv4-only (broken IPv6 is common on servers)."""
+    for ipv4 in (False, True):
+        raw = _curl_ookla_get(url, accept="application/json, */*", ipv4=ipv4)
+        if not raw:
+            continue
+        t = raw.strip()
+        if t.startswith("<"):
+            continue
+        try:
+            return json.loads(t)
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return None
+
+
+def _fetch_speedtest_net_text_urllib(url: str) -> Optional[str]:
+    """GET raw body (XML). Used for speedtest-servers.php legacy list."""
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _OOKLA_UA,
+            "Accept": "application/xml, text/xml, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.speedtest.net/",
+            "Origin": "https://www.speedtest.net",
+        },
+    )
+    ctx = _ssl_context_for_https()
+    try:
+        with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _fetch_speedtest_net_text_curl(url: str) -> Optional[str]:
+    for ipv4 in (False, True):
+        raw = _curl_ookla_get(url, accept="application/xml, text/xml, */*", ipv4=ipv4)
+        if raw and "<server" in raw:
+            return raw
+    return None
+
+
+def _parse_speedtest_servers_xml(text: str) -> list[dict]:
+    """Parse legacy Speedtest.net XML (settings/servers/server[@id]). Same geo list browsers get from .php."""
+    if not text or "<server" not in text:
+        return []
+    try:
+        root = ET.fromstring(text.strip())
+    except ET.ParseError:
+        return []
+    out: list[dict] = []
+    for el in root.iter("server"):
+        a = el.attrib
+        row = _speedtest_net_entry_to_dict(
+            {
+                "id": a.get("id", ""),
+                "sponsor": a.get("sponsor", ""),
+                "name": a.get("name", ""),
+                "country": a.get("country", ""),
+                "cc": a.get("cc", ""),
+                "host": a.get("host", ""),
+            }
+        )
+        if row:
+            out.append(row)
+    return out
+
+
+def _fetch_speedtest_servers_public_api() -> list[dict]:
+    """Large server list from Speedtest.net (geo-based). Supplements Ookla CLI -L (~10–20 nearest).
+
+    Merges every successful JSON/XML response (union by server id) so a partial failure still leaves
+    thousands of rows when any path works. Uses certifi for TLS, Referer headers, and curl -4 fallback.
+    """
+    merged: dict[int, dict] = {}
+    urls = [
+        "https://www.speedtest.net/api/js/servers?limit=10000",
+        "https://www.speedtest.net/api/js/servers?engine=js&https_functional=true&limit=10000",
+    ]
+    for url in urls:
+        # Prefer curl first: same behavior as a manual shell test (works when Python TLS/PATH is broken).
+        for getter in (_fetch_speedtest_net_json_curl, _fetch_speedtest_net_json_urllib):
+            data = getter(url)
+            if data is None:
+                continue
+            for row in _parse_speedtest_net_servers_payload(data):
+                merged.setdefault(int(row["id"]), row)
+    xml_url = "https://www.speedtest.net/speedtest-servers.php"
+    for getter in (_fetch_speedtest_net_text_curl, _fetch_speedtest_net_text_urllib):
+        txt = getter(xml_url)
+        if not txt:
+            continue
+        for row in _parse_speedtest_servers_xml(txt):
+            merged.setdefault(int(row["id"]), row)
+    return sorted(
+        merged.values(),
+        key=lambda x: (str(x.get("country") or "ZZZ"), str(x.get("name") or ""), int(x["id"])),
+    )
 
 
 @app.get("/api/me")
@@ -1347,44 +1535,66 @@ def _escape_csv(val: Any) -> str:
 
 @app.get("/api/export/csv")
 def api_export_csv(date: Optional[str] = None, _user: tuple[str, str] = Depends(get_current_user)):
-    """Export full speedtest and iperf data for a date as CSV (all interval points; chart shows summary only)."""
+    """Export full speedtest and iperf data for a date as CSV.
+
+    Source of truth is SQLite after syncing log files into the DB. Log files under STORAGE/YYYYMMDD/
+    are imported first (same as dashboard); rows that exist only in the DB (e.g. remote node ingest)
+    are included. Extra column probe_id identifies the source node when set.
+    """
     if not date or not date.isdigit():
         return Response(status_code=400)
+    db.init_db(STORAGE)
     day_dir = STORAGE / date
-    if not day_dir.exists() or not day_dir.is_dir():
+    if day_dir.exists() and day_dir.is_dir():
+        _import_day_from_files(date)
+
+    st = db.get_speedtest_export_rows(STORAGE, date)
+    ip = db.get_iperf_export_rows(STORAGE, date)
+    if not st and not ip:
         return Response(status_code=404)
+
     rows: list[list[str]] = []
-    # Header: type, date, site, timestamp, download_mbps, upload_mbps, latency_ms, throughput_mbps
-    rows.append(["type", "date", "site", "timestamp", "download_mbps", "upload_mbps", "latency_ms", "throughput_mbps"])
-    for f in sorted(day_dir.glob("[0-9]_speedtest-*")):
-        label = site_label_from_speedtest_filename(f.name)
-        for pt in parse_speedtest_file(f):
-            d = pt.get("download_bps")
-            u = pt.get("upload_bps")
-            rows.append([
+    rows.append(
+        [
+            "type",
+            "date",
+            "site",
+            "timestamp",
+            "download_mbps",
+            "upload_mbps",
+            "latency_ms",
+            "throughput_mbps",
+            "probe_id",
+        ]
+    )
+    for site, ts, d, u, lat, probe in st:
+        rows.append(
+            [
                 "speedtest",
                 date,
-                _escape_csv(label),
-                _escape_csv(pt.get("timestamp")),
+                site or "",
+                ts or "",
                 str(round((d or 0) / 1e6, 2)) if d is not None else "",
                 str(round((u or 0) / 1e6, 2)) if u is not None else "",
-                str(pt.get("latency_ms")) if pt.get("latency_ms") is not None else "",
+                str(lat) if lat is not None else "",
                 "",
-            ])
-    for f in sorted(day_dir.glob("iperf-*.txt")):
-        label = site_label_from_iperf_filename(f.name)
-        for pt in parse_iperf_file(f, log_date=date, summary_only=False):
-            b = pt.get("bits_per_sec")
-            rows.append([
+                probe or "",
+            ]
+        )
+    for site, ts, bps, probe in ip:
+        rows.append(
+            [
                 "iperf",
                 date,
-                _escape_csv(label),
-                _escape_csv(pt.get("timestamp")),
+                site or "",
+                ts or "",
                 "",
                 "",
                 "",
-                str(round((b or 0) / 1e6, 2)) if b is not None else "",
-            ])
+                str(round((bps or 0) / 1e6, 2)) if bps is not None else "",
+                probe or "",
+            ]
+        )
     body = "\n".join(",".join(_escape_csv(str(c)) for c in row) for row in rows)
     return Response(
         content=body,

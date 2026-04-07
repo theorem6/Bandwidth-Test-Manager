@@ -210,11 +210,11 @@ bwm_install_all_cli_dependencies() {
 	}
 }
 
-# Python + venv support for web UI (install.sh)
+# Python + venv support for web UI (install.sh). Prefer venv over system pip (PEP 668 on Debian 12+).
 bwm_install_python_web_packages() {
 	if command -v apt-get &>/dev/null; then
 		export DEBIAN_FRONTEND=noninteractive
-		apt-get install -y python3 python3-pip 2>/dev/null || true
+		apt-get install -y ca-certificates python3 python3-venv 2>/dev/null || apt-get install -y python3 python3-full
 		if python3 -c "import ensurepip" 2>/dev/null; then
 			:
 		elif [ -f /etc/os-release ] && grep -q "noble\|24.04" /etc/os-release 2>/dev/null; then

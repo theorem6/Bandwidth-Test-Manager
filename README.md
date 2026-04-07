@@ -24,6 +24,12 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
    sudo systemctl restart netperf-web
    ```
 
+   **Debian 12+ / PEP 668:** The one-line install creates **`/opt/netperf-web/venv`** and installs Python packages only there. Do **not** use bare `pip` or `pip3` on the system Python. To reinstall web dependencies after pulling changes:
+
+   ```bash
+   sudo /opt/netperf-web/venv/bin/python3 -m pip install -r /opt/netperf-web/requirements.txt && sudo systemctl restart netperf-web
+   ```
+
    The default branch for this repo is **`main`**. The full install includes the web UI (FastAPI + built static assets under `/opt/netperf-web`).
 
    CLI + cron only (no web app):

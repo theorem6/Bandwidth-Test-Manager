@@ -1,3 +1,5 @@
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.9
+# Reliable CA bundle for HTTPS to speedtest.net (many minimal images lack system certs)
+certifi>=2024.2.2
