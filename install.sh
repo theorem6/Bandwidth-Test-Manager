@@ -3,7 +3,8 @@
 # Supports: Debian/Ubuntu, Fedora/RHEL/Rocky/Alma/Amazon Linux, openSUSE/SLES, Alpine, Arch.
 # With web UI: installs Node.js 18+, runs npm ci && npm run build in web/frontend (Vite → web/static/).
 # Run: sudo ./install.sh [--no-web]
-# Env: BWM_REPO, BWM_REF, BWM_DEBUG=1, SKIP_NPM_BUILD=1 (use committed web/static only; no npm)
+# Env: BWM_SOURCE=archive|git (default archive), BWM_REPO, BWM_REF, BWM_DEBUG=1,
+#      SKIP_NPM_BUILD=1 (use committed web/static only; no npm)
 
 set -eu
 export DEBIAN_FRONTEND=noninteractive
@@ -50,6 +51,43 @@ bwm_download() {
 	fi
 }
 
+# Used when BWM_SOURCE=git and the tree must be fetched; runs before scripts/linux-deps.sh exists.
+bwm_ensure_git() {
+	command -v git &>/dev/null && return 0
+	export DEBIAN_FRONTEND=noninteractive
+	if command -v apt-get &>/dev/null; then
+		apt-get update -qq && apt-get install -y -qq git ca-certificates
+	elif command -v dnf &>/dev/null; then
+		dnf install -y git ca-certificates
+	elif command -v microdnf &>/dev/null; then
+		microdnf install -y git ca-certificates
+	elif command -v yum &>/dev/null; then
+		yum install -y git ca-certificates
+	elif command -v zypper &>/dev/null; then
+		zypper --non-interactive install -y git ca-certificates
+	elif command -v apk &>/dev/null; then
+		apk add --no-cache git ca-certificates
+	elif command -v pacman &>/dev/null; then
+		pacman -Sy --needed --noconfirm git ca-certificates
+	else
+		echo "No supported package manager to install git. Install git manually or set BWM_SOURCE=archive." >&2
+		return 1
+	fi
+	command -v git &>/dev/null
+}
+
+# Clone BWM_REPO, checkout BWM_REF (branch, tag, or commit). Uses shallow clone when possible.
+bwm_fetch_source_git() {
+	local clone_dir="$1"
+	local repo="$2" ref="$3"
+	if git clone --depth 1 --branch "$ref" "$repo" "$clone_dir" 2>/dev/null; then
+		return 0
+	fi
+	echo "=== Shallow clone not possible for ref \"$ref\"; full clone + checkout ===" >&2
+	git clone "$repo" "$clone_dir" || return 1
+	( cd "$clone_dir" && git checkout "$ref" ) || return 1
+}
+
 bwm_tree_complete() {
 	local f
 	for f in scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter scripts/netperf-cron-run scripts/netperf-resolve-ookla-local scripts/linux-deps.sh; do
@@ -66,30 +104,58 @@ SCRIPT_DIR="$(_resolve_script_root)"
 cd "$SCRIPT_DIR"
 
 if ! bwm_tree_complete; then
-	echo "=== Downloading install source ==="
 	BWM_TMPDIR="$(mktemp -d)"
-	TGZ="$BWM_TMPDIR/src.tar.gz"
-	ARCHIVE_URL="${BWM_REPO}/archive/refs/heads/${BWM_REF}.tar.gz"
-	if ! bwm_download "$ARCHIVE_URL" "$TGZ"; then
-		echo "Download failed." >&2
-		[ -n "${BWM_DEBUG:-}" ] && echo "  URL: $ARCHIVE_URL" >&2
-		exit 1
-	fi
-	tar -xzf "$TGZ" -C "$BWM_TMPDIR"
-	FOUND="$(find "$BWM_TMPDIR" -mindepth 1 -maxdepth 1 -type d | head -1)"
-	if [ -z "$FOUND" ] || [ ! -d "$FOUND" ]; then
-		echo "Could not unpack install source." >&2
-		[ -n "${BWM_DEBUG:-}" ] && echo "  Check BWM_REPO / BWM_REF. Temp: $BWM_TMPDIR" >&2
-		exit 1
-	fi
-	SCRIPT_DIR="$FOUND"
-	cd "$SCRIPT_DIR"
-	if ! bwm_tree_complete; then
-		echo "Archive missing expected files." >&2
-		[ -n "${BWM_DEBUG:-}" ] && echo "  URL: $ARCHIVE_URL" >&2
-		exit 1
-	fi
-	echo "=== Install source ready ==="
+	BWM_SRC="${BWM_SOURCE:-archive}"
+	case "$BWM_SRC" in
+		git)
+			echo "=== Cloning install source (BWM_SOURCE=git) ==="
+			if ! bwm_ensure_git; then
+				exit 1
+			fi
+			CLONE_ROOT="$BWM_TMPDIR/src"
+			if ! bwm_fetch_source_git "$CLONE_ROOT" "$BWM_REPO" "$BWM_REF"; then
+				echo "git clone failed." >&2
+				[ -n "${BWM_DEBUG:-}" ] && echo "  BWM_REPO=$BWM_REPO BWM_REF=$BWM_REF" >&2
+				exit 1
+			fi
+			SCRIPT_DIR="$CLONE_ROOT"
+			cd "$SCRIPT_DIR"
+			if ! bwm_tree_complete; then
+				echo "Clone missing expected files." >&2
+				[ -n "${BWM_DEBUG:-}" ] && echo "  BWM_REPO=$BWM_REPO BWM_REF=$BWM_REF" >&2
+				exit 1
+			fi
+			echo "=== Install source ready ==="
+			;;
+		archive|*)
+			if [ "$BWM_SRC" != "archive" ]; then
+				echo "Unknown BWM_SOURCE=\"$BWM_SRC\" (use archive or git). Using archive." >&2
+			fi
+			echo "=== Downloading install source (BWM_SOURCE=archive) ==="
+			TGZ="$BWM_TMPDIR/src.tar.gz"
+			ARCHIVE_URL="${BWM_REPO}/archive/refs/heads/${BWM_REF}.tar.gz"
+			if ! bwm_download "$ARCHIVE_URL" "$TGZ"; then
+				echo "Download failed." >&2
+				[ -n "${BWM_DEBUG:-}" ] && echo "  URL: $ARCHIVE_URL" >&2
+				exit 1
+			fi
+			tar -xzf "$TGZ" -C "$BWM_TMPDIR"
+			FOUND="$(find "$BWM_TMPDIR" -mindepth 1 -maxdepth 1 -type d | head -1)"
+			if [ -z "$FOUND" ] || [ ! -d "$FOUND" ]; then
+				echo "Could not unpack install source." >&2
+				[ -n "${BWM_DEBUG:-}" ] && echo "  Check BWM_REPO / BWM_REF. Temp: $BWM_TMPDIR" >&2
+				exit 1
+			fi
+			SCRIPT_DIR="$FOUND"
+			cd "$SCRIPT_DIR"
+			if ! bwm_tree_complete; then
+				echo "Archive missing expected files." >&2
+				[ -n "${BWM_DEBUG:-}" ] && echo "  URL: $ARCHIVE_URL" >&2
+				exit 1
+			fi
+			echo "=== Install source ready ==="
+			;;
+	esac
 fi
 
 # shellcheck disable=SC1091

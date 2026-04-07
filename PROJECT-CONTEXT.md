@@ -20,7 +20,7 @@
 curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh | sudo bash
 ```
 
-- The script may fetch a source archive automatically (`BWM_REPO` / `BWM_REF`, default branch `main`). Set `BWM_DEBUG=1` for verbose download errors.
+- Without a complete tree beside `install.sh`, the script fetches sources: **`BWM_SOURCE=archive`** (default) downloads a **GitHub-style tarball** (`BWM_REPO` = HTTPS web root, `BWM_REF` = **branch name** only); **`BWM_SOURCE=git`** runs **`git clone`** (`BWM_REPO` = clone URL, `BWM_REF` = branch, tag, or commit). Git is installed via the OS package manager if missing. Set `BWM_DEBUG=1` for verbose errors.
 - **Private GitLab:** use `pack-release.sh` to produce `dist/*.tar.gz`, and `private-download-install.sh` on the server with `GITLAB_TOKEN` (or `BWM_TARBALL_URL`). See README **Private GitLab / offline bundle**.
 - **Web UI asset paths:** Vite `base` is `/static/`; FastAPI serves `StaticFiles` at `/static/`. Behind nginx with a `/netperf/` location, also proxy `/static/` (see `web/nginx-netperf-path.conf`).
 - After install, open the web UI and use **Setup → Site branding** (admin) to white-label the app without editing JSON by hand.

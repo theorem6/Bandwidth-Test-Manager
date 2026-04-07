@@ -16,3 +16,7 @@ CLI only (no web UI):
 
 Private GitLab: use private-download-install.sh with GITLAB_TOKEN, or host this
 tarball on HTTPS and set BWM_TARBALL_URL when running that script.
+
+Online install from the repo (separate from this bundle): install.sh can fetch
+either a source archive (default) or git-clone the project; see README
+"Source: archive vs git" (BWM_SOURCE, BWM_REPO, BWM_REF).

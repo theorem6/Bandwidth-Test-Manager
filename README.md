@@ -10,7 +10,7 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
 
 ## Quick start (Linux)
 
-1. **One-shot install** (deps + scripts + config + web UI). If you run `install.sh` without a full project tree beside it, the script downloads a source archive automatically (no `git clone` required). Installer output is generic; set `BWM_DEBUG=1` to print fetch URLs if something fails.
+1. **One-shot install** (deps + scripts + config + web UI). If you run `install.sh` without a full project tree beside it, the script fetches the project automatically—by default a **source tarball** (no `git` required). Optionally use **`BWM_SOURCE=git`** to **`git clone`** instead (installs `git` via the OS package manager if missing). See **Source: archive vs git** below. Set `BWM_DEBUG=1` for verbose fetch errors.
 
    **Copy-paste install (this repository):**
 
@@ -26,13 +26,30 @@ See **[PROJECT-CONTEXT.md](PROJECT-CONTEXT.md)** for full behavior, options, and
    curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh | sudo bash -s -- --no-web
    ```
 
-   **Other sources:** pipe any hosted raw `install.sh` into bash (your fork, mirror, or release). **Source archive:** `install.sh` uses `BWM_REPO` (HTTPS git web root) and `BWM_REF` (branch). Override when not using the defaults inside the script:
+   **Other sources:** pipe any hosted raw `install.sh` into bash (your fork, mirror, or release).
+
+   **Source: archive vs git**
+
+   | Mode | Env | What happens |
+   |------|-----|----------------|
+   | **Archive** (default) | `BWM_SOURCE=archive` or unset | Downloads `BWM_REPO/archive/refs/heads/BWM_REF.tar.gz` via **curl/wget**. `BWM_REPO` is the repo’s **HTTPS web root** (no `.git`), e.g. `https://github.com/OWNER/REPO`. `BWM_REF` must be a **branch name** on the remote (not a tag or commit SHA). |
+   | **Git** | `BWM_SOURCE=git` | Installs **git** if needed, then **`git clone`** from `BWM_REPO`. Use the **clone URL** (`https://…` or `git@…:.git`). `BWM_REF` can be a **branch, tag, or commit**. |
+
+   Archive override example:
 
    ```bash
    curl -fsSL 'https://raw.githubusercontent.com/OWNER/REPO/main/install.sh' | sudo env BWM_REPO='https://github.com/OWNER/REPO' BWM_REF='main' bash
    ```
 
-   If you already have a full clone, run `sudo ./install.sh` from the project root instead (nothing is re-downloaded).
+   Git clone example (same public repo):
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/theorem6/Bandwidth-Test-Manager/main/install.sh | sudo env BWM_SOURCE=git BWM_REPO='https://github.com/theorem6/Bandwidth-Test-Manager' BWM_REF='main' bash
+   ```
+
+   Private HTTPS GitLab/GitHub: use a **personal access token** or **deploy key** in the clone URL, or SSH (`BWM_REPO=git@host:group/project.git`) with keys installed on the server.
+
+   If you already have a full tree on disk, run `sudo ./install.sh` from the project root instead (nothing is re-fetched).
 
    **GitHub URLs (bookmark for tests and automation)**
 
