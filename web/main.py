@@ -13,10 +13,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import db
+import diagnostics
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -116,7 +118,21 @@ def _normalize_cron_schedule(v: str) -> str:
     return "5 6 * * *"
 
 
-app = FastAPI(title="Bandwidth Test Manager", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    diagnostics.init_diagnostics(STORAGE, CONFIG_PATH)
+    diagnostics.bwm_log().info("Service started pid=%s euid=%s", os.getpid(), os.geteuid())
+    try:
+        diagnostics.run_health_checks(STORAGE, CONFIG_PATH)
+    except Exception:
+        diagnostics.bwm_log().exception("Initial health check failed")
+    _shutdown_diag = diagnostics.start_background_health_monitor(STORAGE, CONFIG_PATH)
+    yield
+    _shutdown_diag()
+    diagnostics.bwm_log().info("Service stopping")
+
+
+app = FastAPI(title="Bandwidth Test Manager", docs_url=None, redoc_url=None, lifespan=_app_lifespan)
 
 
 @app.middleware("http")
@@ -1171,10 +1187,20 @@ def api_run_now(_user: tuple[str, str] = Depends(require_admin)):
                 )
             except OSError:
                 pass
+            if r.returncode != 0:
+                diagnostics.bwm_log().warning(
+                    "run-now exit code=%s cmd=%s stderr_tail=%s",
+                    r.returncode,
+                    cmd,
+                    (r.stderr or "")[-2000:],
+                )
+            else:
+                diagnostics.bwm_log().info("run-now completed successfully")
             today = datetime.utcnow().strftime("%Y%m%d")
             _import_day_from_files(today)
             _evaluate_sla_and_webhook()
         except Exception as ex:
+            diagnostics.bwm_log().exception("run-now failed: %s", ex)
             try:
                 run_now_log.write_text(f"cmd={cmd!r}\nexception={ex!r}\n", encoding="utf-8")
             except OSError:
@@ -2170,15 +2196,39 @@ def api_install_deps(_user: tuple[str, str] = Depends(require_admin)):
             env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
         )
         if r.returncode != 0:
+            err_tail = (r.stderr or r.stdout or "Install failed").strip()
+            diagnostics.bwm_log().warning("install-deps failed rc=%s: %s", r.returncode, err_tail[:3000])
             return JSONResponse(
-                {"ok": False, "error": (r.stderr or r.stdout or "Install failed").strip()[:500]},
+                {"ok": False, "error": err_tail[:500]},
                 status_code=500,
             )
+        diagnostics.bwm_log().info("install-deps completed successfully")
         return JSONResponse({"ok": True, "message": "Dependencies installed."})
     except subprocess.TimeoutExpired:
+        diagnostics.bwm_log().warning("install-deps timed out (5 min limit)")
         return JSONResponse({"ok": False, "error": "Install timed out (5 min)."}, status_code=500)
     except Exception as e:
+        diagnostics.bwm_log().exception("install-deps error: %s", e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/admin/diagnostics")
+def api_admin_diagnostics(
+    limit: int = 400,
+    _user: tuple[str, str] = Depends(require_admin),
+):
+    """Recent app log lines + fresh health checks (scripts, config, storage, cron, Ookla CLI). Admin only."""
+    lim = max(50, min(limit, 2000))
+    checks = diagnostics.run_health_checks(STORAGE, CONFIG_PATH)
+    logs = diagnostics.get_recent_log_entries(lim)
+    return JSONResponse(
+        {
+            "checks": checks,
+            "logs": logs,
+            "log_file": str(STORAGE / "app-events.log"),
+            "health_interval_minutes": 5,
+        }
+    )
 
 
 if __name__ == "__main__":

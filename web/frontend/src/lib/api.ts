@@ -371,6 +371,30 @@ export async function getHealth(): Promise<HealthResponse> {
   return fetchApi<HealthResponse>('/api/health');
 }
 
+export interface DiagnosticCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface DiagnosticLogLine {
+  ts: string;
+  level: string;
+  message: string;
+}
+
+export interface DiagnosticsResponse {
+  checks: DiagnosticCheck[];
+  logs: DiagnosticLogLine[];
+  log_file: string;
+  health_interval_minutes: number;
+}
+
+/** Admin only: health checks + recent app log buffer (also under NETPERF_STORAGE/app-events.log). */
+export async function getDiagnostics(limit = 500): Promise<DiagnosticsResponse> {
+  return fetchApi<DiagnosticsResponse>(`/api/admin/diagnostics?limit=${encodeURIComponent(String(limit))}`);
+}
+
 /** Fetch CSV export for a date (full speedtest + iperf data). Returns blob for download. */
 export async function getExportCsvBlob(date: string): Promise<Blob> {
   const base = getBase();

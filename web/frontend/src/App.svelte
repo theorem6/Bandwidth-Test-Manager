@@ -4,6 +4,7 @@
   import Scheduler from './Scheduler.svelte';
   import Settings from './Settings.svelte';
   import Setup from './Setup.svelte';
+  import Logs from './Logs.svelte';
   import RemoteNodes from './RemoteNodes.svelte';
   import NodeView from './NodeView.svelte';
   import { getStatus, schedulerStart, schedulerStop, loginWithCredentials } from './lib/api';
@@ -12,7 +13,7 @@
   import { initTheme } from './lib/theme';
   import { branding, loadBranding, effectiveLogo, effectiveTitle, effectiveTagline, effectiveLogoAlt } from './lib/branding';
 
-  type View = 'dashboard' | 'scheduler' | 'settings' | 'setup' | 'nodes' | 'node';
+  type View = 'dashboard' | 'scheduler' | 'settings' | 'setup' | 'logs' | 'nodes' | 'node';
   let currentView: View = 'dashboard';
   let selectedNodeId: string | null = null;
   let selectedNodeName = '';
@@ -165,6 +166,11 @@
           <a href="/netperf/" class="nav-link" class:active={currentView === 'setup'} on:click|preventDefault={() => { currentView = 'setup'; sidebarOpen = false; }}>
             <i class="bi bi-tools"></i> Setup
           </a>
+          {#if user.role === 'admin'}
+            <a href="/netperf/" class="nav-link" class:active={currentView === 'logs'} on:click|preventDefault={() => { currentView = 'logs'; sidebarOpen = false; }}>
+              <i class="bi bi-journal-text"></i> Logs
+            </a>
+          {/if}
           <a href="/netperf/" class="nav-link" class:active={currentView === 'nodes' || currentView === 'node'} on:click|preventDefault={() => { currentView = 'nodes'; selectedNodeId = null; sidebarOpen = false; }}>
             <i class="bi bi-hdd-network"></i> Remote nodes
           </a>
@@ -173,7 +179,7 @@
 
       <main class="content">
         <h1 class="h4 mb-3 mb-md-4 page-title">
-          {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : currentView === 'setup' ? 'Setup' : currentView === 'nodes' ? 'Remote nodes' : currentView === 'node' ? selectedNodeName || 'Node' : 'Dashboard'}
+          {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : currentView === 'setup' ? 'Setup' : currentView === 'logs' ? 'Logs' : currentView === 'nodes' ? 'Remote nodes' : currentView === 'node' ? selectedNodeName || 'Node' : 'Dashboard'}
         </h1>
         {#if currentView === 'dashboard'}
           <Dashboard onToast={setToast} showAdminActions={true} />
@@ -188,6 +194,8 @@
           <Scheduler {loadStatus} onToast={setToast} />
         {:else if currentView === 'settings'}
           <Settings onToast={setToast} />
+        {:else if currentView === 'logs'}
+          <Logs onToast={setToast} />
         {:else}
           <Setup onToast={setToast} />
         {/if}
