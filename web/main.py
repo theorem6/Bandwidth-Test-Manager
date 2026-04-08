@@ -25,6 +25,12 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from typing import Any, Optional
 
+
+def _netperf_log_date_str() -> str:
+    """Folder YYYYMMDD under storage; must match netperf-cron-run's date +%Y%m%d (local timezone)."""
+    return datetime.now().strftime("%Y%m%d")
+
+
 # Built-in users (used when config auth_users is missing or empty). username -> (password, role)
 AUTH_USERS_BUILTIN = {
     "bwadmin": ("unl0ck", "admin"),
@@ -429,7 +435,7 @@ def _evaluate_sla_and_webhook() -> None:
     max_latency_ms = thresholds.get("max_latency_ms")
     if min_download_mbps is None and min_upload_mbps is None and max_latency_ms is None:
         return
-    today = datetime.utcnow().strftime("%Y%m%d")
+    today = _netperf_log_date_str()
     db.init_db(STORAGE)
     probe_id = (cfg.get("probe_id") or "").strip() or None
     results = db.get_latest_speedtest_results(STORAGE, today, probe_id=probe_id)
@@ -1139,8 +1145,7 @@ def _run_now_cmd() -> list:
     if Path("/bin/netperf-cron-run").exists():
         run_args = ["/bin/netperf-cron-run"]
     else:
-        from datetime import datetime
-        today = datetime.utcnow().strftime("%Y%m%d")
+        today = _netperf_log_date_str()
         storage_today = STORAGE / today
         storage_today.mkdir(parents=True, exist_ok=True)
         if Path("/bin/netperf-tester").exists():
@@ -1216,7 +1221,7 @@ def api_run_now(_user: tuple[str, str] = Depends(require_admin)):
                 )
             else:
                 diagnostics.bwm_log().info("run-now completed successfully")
-            today = datetime.utcnow().strftime("%Y%m%d")
+            today = _netperf_log_date_str()
             _import_day_from_files(today)
             _evaluate_sla_and_webhook()
         except Exception as ex:
