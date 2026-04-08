@@ -179,6 +179,15 @@ bwm_ensure_ookla_speedtest_symlink() {
 	fi
 }
 
+# If we only have a symlink to the distro binary, replace it with the official tarball file (same Ookla
+# build, but a real path under /usr/local; set SKIP_OOKLA_TARBALL=1 to skip the extra download).
+bwm_replace_ookla_symlink_with_tarball() {
+	[ "${SKIP_OOKLA_TARBALL:-0}" = "1" ] && return 0
+	[ -L /usr/local/bin/speedtest ] || return 0
+	echo "=== Replacing /usr/local/bin/speedtest symlink with official tarball (stable file under /usr/local) ==="
+	bwm_speedtest_install_official_binary || true
+}
+
 # Main entry: CLI tools (speedtest, iperf3, jq, mtr, curl, tar)
 bwm_install_all_cli_dependencies() {
 	local fam mgr
@@ -224,6 +233,7 @@ bwm_install_all_cli_dependencies() {
 	esac
 
 	bwm_ensure_ookla_speedtest_symlink
+	bwm_replace_ookla_symlink_with_tarball
 
 	command -v speedtest &>/dev/null || {
 		echo "speedtest CLI not available after install." >&2
