@@ -84,6 +84,20 @@ def init_db(storage: Path) -> None:
         if not _has_column(conn, "remote_nodes", "address"):
             conn.execute("ALTER TABLE remote_nodes ADD COLUMN address TEXT DEFAULT ''")
             conn.commit()
+        # One-time (user_version < 2): empty timestamp breaks UNIQUE(log_date,site,timestamp).
+        uv_row = conn.execute("PRAGMA user_version").fetchone()
+        uv = int(uv_row[0]) if uv_row and uv_row[0] is not None else 0
+        if uv < 2:
+            conn.execute(
+                "UPDATE speedtest_results SET timestamp = 'legacy-st-' || CAST(id AS TEXT) "
+                "WHERE timestamp IS NULL OR TRIM(COALESCE(timestamp, '')) = ''"
+            )
+            conn.execute(
+                "UPDATE iperf_results SET timestamp = 'legacy-ip-' || CAST(id AS TEXT) "
+                "WHERE timestamp IS NULL OR TRIM(COALESCE(timestamp, '')) = ''"
+            )
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
     finally:
         conn.close()
 

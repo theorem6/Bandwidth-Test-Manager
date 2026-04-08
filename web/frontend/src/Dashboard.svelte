@@ -435,27 +435,43 @@
       historyLoading = false;
     }
   }
+  /** Sortable x-axis key for history API points (one sample per run, not one per calendar day). */
+  function historyTrendSortKey(p: { date: string; timestamp?: string }): string {
+    const t = (p.timestamp && String(p.timestamp).trim()) || '';
+    if (t) return t;
+    const d = p.date;
+    if (d && d.length === 8) {
+      return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T12:00:00.000000Z`;
+    }
+    return d || '';
+  }
+
   function renderTrendCharts() {
     [trendDownloadChart, trendUploadChart, trendLatencyChart, trendIperfChart].forEach((c) => { if (c) c.destroy(); });
     trendDownloadChart = trendUploadChart = trendLatencyChart = trendIperfChart = null;
     const sites = [...new Set(historyData.speedtest.map((p) => p.site))];
     if (sites.length && historyData.speedtest.length && trendDownloadCanvas) {
-      const labels = [...new Set(historyData.speedtest.map((p) => p.date))].sort();
-      const displayLabels = labels.map(formatDateShort);
+      const sortKeys = [...new Set(historyData.speedtest.map(historyTrendSortKey))].sort(
+        (a, b) => new Date(a).getTime() - new Date(b).getTime()
+      );
+      const displayLabels = sortKeys.map((k) => {
+        const ms = new Date(k).getTime();
+        return Number.isNaN(ms) ? k : formatDateTimeShort(k);
+      });
       const bySite = (key: 'download_bps' | 'upload_bps' | 'latency_ms') => {
         return sites.map((site, i) => {
-          const byDate: Record<string, number[]> = {};
-          historyData.speedtest.filter((p) => p.site === site).forEach((p) => {
-            const v = (p as unknown as Record<string, unknown>)[key];
-            if (v != null && typeof v === 'number') {
-              if (!byDate[p.date]) byDate[p.date] = [];
-              byDate[p.date].push(v);
-            }
-          });
-          const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+          const byKey: Record<string, number> = {};
+          historyData.speedtest
+            .filter((p) => p.site === site)
+            .forEach((p) => {
+              const v = (p as unknown as Record<string, unknown>)[key];
+              if (v != null && typeof v === 'number') {
+                byKey[historyTrendSortKey(p)] = v;
+              }
+            });
           return {
             label: site,
-            data: labels.map((d) => (byDate[d]?.length ? avg(byDate[d]) : null)),
+            data: sortKeys.map((k) => (k in byKey ? byKey[k] : null)),
             borderColor: COLORS[i % COLORS.length],
             backgroundColor: COLORS[i % COLORS.length] + '30',
             borderWidth: 3,
@@ -474,16 +490,21 @@
     }
     const iperfSites = [...new Set(historyData.iperf.map((p) => p.site))];
     if (iperfSites.length && historyData.iperf.length && trendIperfCanvas) {
-      const labels = [...new Set(historyData.iperf.map((p) => p.date))].sort();
-      const displayLabels = labels.map(formatDateShort);
+      const iperfKeys = [...new Set(historyData.iperf.map(historyTrendSortKey))].sort(
+        (a, b) => new Date(a).getTime() - new Date(b).getTime()
+      );
+      const displayLabels = iperfKeys.map((k) => {
+        const ms = new Date(k).getTime();
+        return Number.isNaN(ms) ? k : formatDateTimeShort(k);
+      });
       const datasets = iperfSites.map((site, i) => {
-        const byDate: Record<string, number> = {};
+        const byKey: Record<string, number> = {};
         historyData.iperf.filter((p) => p.site === site).forEach((p) => {
-          if (p.bits_per_sec != null) byDate[p.date] = p.bits_per_sec;
+          if (p.bits_per_sec != null) byKey[historyTrendSortKey(p)] = p.bits_per_sec;
         });
         return {
           label: site,
-          data: labels.map((d) => byDate[d] ?? null),
+          data: iperfKeys.map((k) => (k in byKey ? byKey[k] : null)),
           borderColor: COLORS[i % COLORS.length],
           backgroundColor: COLORS[i % COLORS.length] + '30',
           borderWidth: 3,

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+from collections import defaultdict
 import re
 import secrets
 import shutil
@@ -282,6 +283,38 @@ def save_config(data: dict) -> None:
         json.dump(data, f, indent=2)
 
 
+def _ookla_timestamp_from_obj(obj: dict) -> str:
+    """Best-effort ISO timestamp from Ookla result JSON (field names vary by CLI version)."""
+    for key in ("timestamp", "date", "time"):
+        v = obj.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    res = obj.get("result")
+    if isinstance(res, dict):
+        for key in ("timestamp", "date"):
+            v = res.get(key)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+    return ""
+
+
+def _ensure_unique_timestamps_in_points(points: list[dict], log_date: str, field: str = "timestamp") -> None:
+    """Fill missing timestamps and break duplicates so INSERT OR IGNORE keeps every run (same site, same day)."""
+    if not points or len(log_date) < 8:
+        return
+    try:
+        y, mo, d = int(log_date[:4]), int(log_date[4:6]), int(log_date[6:8])
+        base = datetime(y, mo, d, 12, 0, 0)
+    except ValueError:
+        return
+    seen: set[str] = set()
+    for i, pt in enumerate(points):
+        raw = (pt.get(field) or "").strip() if isinstance(pt.get(field), str) else str(pt.get(field) or "").strip()
+        if not raw or raw in seen:
+            pt[field] = (base + timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%S") + ".000000Z"
+        seen.add(pt[field])
+
+
 def _speedtest_result_to_point(obj: dict, require_type: bool = True) -> dict | None:
     """Extract one result point from Ookla JSON. Bandwidth is bytes/sec; we convert to bps (*8).
     When require_type=False, accept any object with download/upload (e.g. partial or alternate CLI output)."""
@@ -302,7 +335,7 @@ def _speedtest_result_to_point(obj: dict, require_type: bool = True) -> dict | N
         except (TypeError, ValueError):
             latency_ms = None
     return {
-        "timestamp": str(obj.get("timestamp", "")),
+        "timestamp": _ookla_timestamp_from_obj(obj),
         "download_bps": download_bps,
         "upload_bps": upload_bps,
         "latency_ms": latency_ms,
@@ -419,11 +452,13 @@ def _import_day_from_files(log_date: str) -> None:
         label = site_label_from_speedtest_filename(f.name)
         points = parse_speedtest_file(f)
         if points:
+            _ensure_unique_timestamps_in_points(points, log_date)
             db.import_speedtest_file_into_db(STORAGE, log_date, label, points, probe_id=probe_id)
     for f in sorted(day_dir.glob("iperf-*.txt")):
         label = site_label_from_iperf_filename(f.name)
         points = parse_iperf_file(f, log_date=log_date, summary_only=True)
         if points:
+            _ensure_unique_timestamps_in_points(points, log_date)
             db.import_iperf_file_into_db(STORAGE, log_date, label, points, probe_id=probe_id)
 
 
@@ -1626,13 +1661,19 @@ async def api_remote_ingest(request: Request):
     if not log_date or not re.match(r"^\d{8}$", log_date):
         return JSONResponse({"ok": False, "error": "log_date required (YYYYMMDD)"}, status_code=400)
     probe_id = node["node_id"]
-    for st in data.get("speedtest") or []:
-        if isinstance(st, dict):
+    st_rows = [x for x in (data.get("speedtest") or []) if isinstance(x, dict)]
+    by_site: dict[str, list[dict]] = defaultdict(list)
+    for st in st_rows:
+        site = str(st.get("site") or "Remote").strip() or "Remote"
+        by_site[site].append(st)
+    for site, arr in by_site.items():
+        _ensure_unique_timestamps_in_points(arr, log_date)
+        for st in arr:
             try:
                 db.insert_speedtest(
                     STORAGE,
                     log_date=log_date,
-                    site=str(st.get("site") or "Remote").strip() or "Remote",
+                    site=site,
                     timestamp=str(st.get("timestamp") or ""),
                     download_bps=int(st["download_bps"]) if st.get("download_bps") is not None else None,
                     upload_bps=int(st["upload_bps"]) if st.get("upload_bps") is not None else None,
@@ -1641,16 +1682,25 @@ async def api_remote_ingest(request: Request):
                 )
             except (TypeError, ValueError, KeyError):
                 pass
-    for ip in data.get("iperf") or []:
-        if isinstance(ip, dict) and ip.get("bits_per_sec") is not None:
-            db.insert_iperf(
-                STORAGE,
-                log_date=log_date,
-                site=str(ip.get("site") or "iperf").strip() or "iperf",
-                timestamp=str(ip.get("timestamp") or ""),
-                bits_per_sec=float(ip["bits_per_sec"]),
-                probe_id=probe_id,
-            )
+    ip_rows = [x for x in (data.get("iperf") or []) if isinstance(x, dict) and x.get("bits_per_sec") is not None]
+    by_isite: dict[str, list[dict]] = defaultdict(list)
+    for ip in ip_rows:
+        site = str(ip.get("site") or "iperf").strip() or "iperf"
+        by_isite[site].append(ip)
+    for site, arr in by_isite.items():
+        _ensure_unique_timestamps_in_points(arr, log_date)
+        for ip in arr:
+            try:
+                db.insert_iperf(
+                    STORAGE,
+                    log_date=log_date,
+                    site=site,
+                    timestamp=str(ip.get("timestamp") or ""),
+                    bits_per_sec=float(ip["bits_per_sec"]),
+                    probe_id=probe_id,
+                )
+            except (TypeError, ValueError, KeyError):
+                pass
     db.update_remote_node_last_seen(STORAGE, probe_id)
     return JSONResponse({"ok": True, "message": "Ingested"})
 
@@ -1771,7 +1821,7 @@ def api_history(days: int = 90, probe_id: Optional[str] = None):
     """Return time-series data for trend graphs. Optional probe_id filter for remote node view."""
     try:
         db.init_db(STORAGE)
-        cutoff = (datetime.utcnow() - timedelta(days=min(days, 365))).strftime("%Y%m%d")
+        cutoff = (datetime.now() - timedelta(days=min(days, 365))).strftime("%Y%m%d")
         if STORAGE.exists():
             for d in STORAGE.iterdir():
                 if d.is_dir() and d.name.isdigit() and d.name >= cutoff:
