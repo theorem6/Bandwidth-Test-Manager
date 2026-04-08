@@ -1,5 +1,8 @@
 #!/bin/bash
 # netperf-tester rev 2026-04-12 (writable HOME for Ookla ~/.config/ookla; NETPERF_OOKLA_HOME overrides)
+#
+# History: before 2026-04-07, speedtest stderr was often "2>/dev/null" — C++/Ookla failures were invisible.
+# We now log to speedtest.stderr.log and set HOME=/var/lib/netperf-ookla so ~/.config/ookla is writable.
 set -eu
 
 ### Root check ###
