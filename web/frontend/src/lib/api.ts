@@ -381,18 +381,44 @@ export interface DiagnosticLogLine {
   ts: string;
   level: string;
   message: string;
+  raw?: string;
+}
+
+export type LogStreamId = 'app_buffer' | 'app_events' | 'run_now' | 'speedtest_stderr';
+
+export interface DiagnosticStreamMeta {
+  path: string | null;
+  lines: DiagnosticLogLine[];
 }
 
 export interface DiagnosticsResponse {
   checks: DiagnosticCheck[];
   logs: DiagnosticLogLine[];
+  /** Parsed streams keyed by id (subset if filtered by `sources`). */
+  streams?: Record<string, DiagnosticStreamMeta>;
+  /** Concatenated lines from enabled streams in fixed order. */
+  merged?: Array<DiagnosticLogLine & { source: LogStreamId }>;
+  stream_order?: LogStreamId[];
   log_file: string;
   health_interval_minutes: number;
 }
 
-/** Admin only: health checks + recent app log buffer (also under NETPERF_STORAGE/app-events.log). */
-export async function getDiagnostics(limit = 500): Promise<DiagnosticsResponse> {
-  return fetchApi<DiagnosticsResponse>(`/api/admin/diagnostics?limit=${encodeURIComponent(String(limit))}`);
+const LOG_SOURCE_IDS: LogStreamId[] = ['app_buffer', 'app_events', 'run_now', 'speedtest_stderr'];
+
+/** Admin only: health checks + parsed log streams (buffer, files). */
+export async function getDiagnostics(
+  limit = 500,
+  sources: LogStreamId[] | 'all' = 'all',
+): Promise<DiagnosticsResponse> {
+  const params = new URLSearchParams();
+  params.set('limit', String(limit));
+  if (sources !== 'all' && sources.length > 0) {
+    const want = sources.filter((s) => LOG_SOURCE_IDS.includes(s));
+    if (want.length > 0) {
+      params.set('sources', want.join(','));
+    }
+  }
+  return fetchApi<DiagnosticsResponse>(`/api/admin/diagnostics?${params.toString()}`);
 }
 
 /** Fetch CSV export for a date (full speedtest + iperf data). Returns blob for download. */

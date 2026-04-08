@@ -59,15 +59,13 @@ START() {
 		echo "netperf-tester: speedtest not found in PATH (cron often lacks /usr/local/bin). iperf will still run." >&2
 	fi
 
-	# Optional speed limit in Mbps (applied via trickle if available)
+	# Optional speed limit in Mbps (trickle KB/s = Mbps * 1000 / 8). Set NETPERF_SKIP_TRICKLE=1 to disable.
 	LIMIT_MBPS=$(jq -r '.speedtest_limit_mbps // empty' "$CONFIG_FILE")
-	SPEEDTEST_CMD="${SPEEDTEST_BIN:-}"
-	if [ -n "$SPEEDTEST_BIN" ] && [ -n "$LIMIT_MBPS" ] && [ "$LIMIT_MBPS" != "null" ]; then
-		# trickle uses KB/s: Mbps * 1000 / 8 = KB/s
+	LIMIT_KBPS=""
+	if [ "${NETPERF_SKIP_TRICKLE:-}" = "1" ]; then
+		:
+	elif [ -n "$SPEEDTEST_BIN" ] && [ -n "$LIMIT_MBPS" ] && [ "$LIMIT_MBPS" != "null" ]; then
 		LIMIT_KBPS=$(awk "BEGIN { printf \"%.0f\", ($LIMIT_MBPS * 1000) / 8 }")
-		if command -v trickle >/dev/null 2>&1; then
-			SPEEDTEST_CMD="trickle -d $LIMIT_KBPS -u $LIMIT_KBPS $SPEEDTEST_BIN"
-		fi
 	fi
 
 	# Filenames only: labels like "ISP / nearest (auto)" must not contain / or spaces (breaks redirects).
@@ -76,12 +74,25 @@ START() {
 	# Ookla Speedtest: run each server from config. If ookla_servers is empty, run one Auto test
 	# so scheduled runs still produce Speedtest data when only iperf is explicitly configured.
 	# Errors (e.g. missing binary) go to speedtest.stderr.log — install links /usr/local/bin/speedtest.
+	# Use a function so paths are never word-split wrong; LC_ALL=C avoids some libc string crashes in older CLIs.
 	STERR="$STORAGE_LOCATION/speedtest.stderr.log"
+	run_st() {
+		local outfile="$1"
+		shift
+		export LC_ALL=C
+		export LANGUAGE=C
+		[ -n "$SPEEDTEST_BIN" ] || return 0
+		if [ -n "$LIMIT_KBPS" ] && command -v trickle >/dev/null 2>&1; then
+			trickle -d "$LIMIT_KBPS" -u "$LIMIT_KBPS" "$SPEEDTEST_BIN" "$@" -f json >>"$outfile" 2>>"$STERR" || true
+		else
+			"$SPEEDTEST_BIN" "$@" -f json >>"$outfile" 2>>"$STERR" || true
+		fi
+	}
 	if [ -n "$SPEEDTEST_BIN" ]; then
 		OOKLA_N=$(jq '.ookla_servers // [] | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
 		if [ "${OOKLA_N:-0}" -eq 0 ]; then
 			outfile="$STORAGE_LOCATION/0_speedtest-auto"
-			$SPEEDTEST_CMD -f json >> "$outfile" 2>> "$STERR" || true
+			run_st "$outfile"
 		else
 			idx=0
 			while true; do
@@ -92,19 +103,19 @@ START() {
 				[ -z "$label_safe" ] && label_safe="server${idx}"
 				outfile="$STORAGE_LOCATION/${idx}_speedtest-${label_safe}"
 				if [ "$id" = "auto" ]; then
-					$SPEEDTEST_CMD -f json >> "$outfile" 2>> "$STERR" || true
+					run_st "$outfile"
 				elif [ "$id" = "local" ]; then
 					RESOLVED=""
 					if command -v netperf-resolve-ookla-local >/dev/null 2>&1; then
 						RESOLVED=$(netperf-resolve-ookla-local "$CONFIG_FILE" 2>/dev/null || true)
 					fi
 					if [ -n "$RESOLVED" ]; then
-						$SPEEDTEST_CMD -s "$RESOLVED" -f json >> "$outfile" 2>> "$STERR" || true
+						run_st "$outfile" -s "$RESOLVED"
 					else
-						$SPEEDTEST_CMD -f json >> "$outfile" 2>> "$STERR" || true
+						run_st "$outfile"
 					fi
 				else
-					$SPEEDTEST_CMD -s "$id" -f json >> "$outfile" 2>> "$STERR" || true
+					run_st "$outfile" -s "$id"
 				fi
 				sleep 10
 				idx=$((idx + 1))

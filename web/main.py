@@ -19,7 +19,7 @@ from pathlib import Path
 
 import db
 import diagnostics
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -2215,17 +2215,63 @@ def api_install_deps(_user: tuple[str, str] = Depends(require_admin)):
 @app.get("/api/admin/diagnostics")
 def api_admin_diagnostics(
     limit: int = 400,
+    sources: str | None = Query(
+        None,
+        description="Comma-separated: app_buffer,app_events,run_now,speedtest_stderr (default: all)",
+    ),
     _user: tuple[str, str] = Depends(require_admin),
 ):
-    """Recent app log lines + fresh health checks (scripts, config, storage, cron, Ookla CLI). Admin only."""
+    """Health checks + parsed log streams (buffer, app-events.log, run-now-last.log, speedtest stderr). Admin only."""
     lim = max(50, min(limit, 2000))
     checks = diagnostics.run_health_checks(STORAGE, CONFIG_PATH)
-    logs = diagnostics.get_recent_log_entries(lim)
+    want = diagnostics.parse_sources_param(sources)
+
+    streams: dict[str, Any] = {}
+    app_log_path = STORAGE / "app-events.log"
+    run_now_path = STORAGE / "run-now-last.log"
+    st_err = diagnostics.speedtest_stderr_path(STORAGE)
+
+    if "app_buffer" in want:
+        buf = diagnostics.get_recent_log_entries(lim)
+        streams["app_buffer"] = {"path": None, "lines": buf}
+    if "app_events" in want:
+        streams["app_events"] = {
+            "path": str(app_log_path) if app_log_path.is_file() else str(app_log_path),
+            "lines": diagnostics.tail_file_parsed(app_log_path, max_lines=lim, default_level="LOG"),
+        }
+    if "run_now" in want:
+        streams["run_now"] = {
+            "path": str(run_now_path),
+            "lines": diagnostics.tail_file_parsed(run_now_path, max_lines=lim, default_level="RUN"),
+        }
+    if "speedtest_stderr" in want:
+        lines: list[dict[str, Any]] = []
+        if st_err and st_err.is_file():
+            lines = diagnostics.tail_file_parsed(
+                st_err, max_lines=lim, default_level="STDERR", dedupe_runs=True
+            )
+        streams["speedtest_stderr"] = {"path": str(st_err) if st_err else None, "lines": lines}
+
+    # Flatten in stable order for clients that want one scroll region
+    order = diagnostics.LOG_STREAM_IDS
+    merged: list[dict[str, Any]] = []
+    for sid in order:
+        if sid not in want:
+            continue
+        meta = streams.get(sid) or {}
+        for row in meta.get("lines") or []:
+            entry = {**row, "source": sid}
+            merged.append(entry)
+
+    legacy_logs = diagnostics.get_recent_log_entries(lim)
     return JSONResponse(
         {
             "checks": checks,
-            "logs": logs,
-            "log_file": str(STORAGE / "app-events.log"),
+            "logs": legacy_logs,
+            "streams": streams,
+            "merged": merged,
+            "stream_order": [s for s in order if s in want],
+            "log_file": str(app_log_path),
             "health_interval_minutes": 5,
         }
     )

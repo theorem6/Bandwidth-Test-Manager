@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -11,6 +12,12 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable
+
+# App log file format: 2025-04-07T12:00:00Z INFO message
+_APP_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+(\w+)\s+(.*)$")
+_GENERIC_TS = re.compile(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})\s+(.*)$")
+
+LOG_STREAM_IDS = ("app_buffer", "app_events", "run_now", "speedtest_stderr")
 
 _lock = threading.Lock()
 _buffer: deque[dict[str, Any]] = deque(maxlen=2500)
@@ -28,13 +35,12 @@ class _BufferHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            msg = self.format(record)
             with _lock:
                 _buffer.append(
                     {
                         "ts": _utc_now_iso(),
                         "level": record.levelname,
-                        "message": msg,
+                        "message": record.getMessage(),
                     }
                 )
         except Exception:
@@ -88,6 +94,113 @@ def get_recent_log_entries(limit: int = 300) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
         return list(_buffer)[-limit:]
+
+
+def parse_log_line(line: str, default_level: str = "LOG") -> dict[str, Any] | None:
+    """Parse one log line into ts / level / message; skip empty lines."""
+    s = line.rstrip("\n\r")
+    if not s.strip():
+        return None
+    m = _APP_LINE.match(s)
+    if m:
+        return {"ts": m.group(1), "level": m.group(2), "message": m.group(3).strip(), "raw": s}
+    m2 = _GENERIC_TS.match(s)
+    if m2:
+        raw_ts = m2.group(1).replace(" ", "T")
+        if not raw_ts.endswith("Z"):
+            raw_ts = raw_ts + "Z"
+        return {"ts": raw_ts, "level": default_level, "message": m2.group(2).strip(), "raw": s}
+    return {"ts": "", "level": default_level, "message": s, "raw": s}
+
+
+def _dedupe_repeated_lines(lines: list[str], repeat_cap: int = 8) -> list[str]:
+    """Collapse long runs of identical lines (e.g. Ookla abort spam) with a single summary line."""
+    if not lines:
+        return []
+    out: list[str] = []
+    prev: str | None = None
+    run = 0
+    for line in lines:
+        if line == prev:
+            run += 1
+            if run <= repeat_cap:
+                out.append(line)
+            elif run == repeat_cap + 1:
+                out.append(
+                    f"... ({run - repeat_cap} identical lines omitted; "
+                    "replace Ookla CLI or set NETPERF_SKIP_TRICKLE=1 if using trickle) ..."
+                )
+            continue
+        prev = line
+        run = 1
+        out.append(line)
+    return out
+
+
+def tail_file_parsed(
+    path: Path,
+    *,
+    max_lines: int = 500,
+    max_bytes: int = 400_000,
+    default_level: str = "LOG",
+    dedupe_runs: bool = False,
+) -> list[dict[str, Any]]:
+    """Read last chunk of a text file and return parsed non-empty lines."""
+    if not path.is_file():
+        return []
+    try:
+        raw = path.read_bytes()
+        if len(raw) > max_bytes:
+            raw = raw[-max_bytes:]
+        text = raw.decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = text.splitlines()
+    if dedupe_runs:
+        lines = _dedupe_repeated_lines(lines)
+    chunk = lines[-max_lines:] if len(lines) > max_lines else lines
+    out: list[dict[str, Any]] = []
+    for ln in chunk:
+        p = parse_log_line(ln, default_level=default_level)
+        if p:
+            out.append(p)
+    return out
+
+
+def latest_yyyymmdd_subdir(storage: Path) -> Path | None:
+    """Newest YYYYMMDD child directory under storage, if any."""
+    best: tuple[str, Path] | None = None
+    try:
+        for p in storage.iterdir():
+            if p.is_dir() and len(p.name) == 8 and p.name.isdigit():
+                if best is None or p.name > best[0]:
+                    best = (p.name, p)
+    except OSError:
+        return None
+    return best[1] if best else None
+
+
+def speedtest_stderr_path(storage: Path) -> Path | None:
+    """Prefer today's run folder speedtest.stderr.log; else newest date folder; else root file."""
+    sub = latest_yyyymmdd_subdir(storage)
+    if sub:
+        f = sub / "speedtest.stderr.log"
+        if f.is_file():
+            return f
+    root = storage / "speedtest.stderr.log"
+    if root.is_file():
+        return root
+    return None
+
+
+def parse_sources_param(s: str | None) -> set[str]:
+    """Comma-separated source ids; empty or None means all streams."""
+    all_ids = set(LOG_STREAM_IDS)
+    if not s or not s.strip():
+        return all_ids
+    got = {x.strip().lower() for x in s.split(",") if x.strip()}
+    picked = got & all_ids
+    return picked if picked else all_ids
 
 
 def read_root_crontab() -> str:
