@@ -1,5 +1,5 @@
 #!/bin/bash
-# netperf-tester rev 2026-04-13 (Ookla: writable HOME, license flags, PTY retry on abort; NETPERF_OOKLA_HOME)
+# netperf-tester rev 2026-04-14 (skip --accept-license if ~/.config/ookla/speedtest-cli.json exists; NETPERF_OOKLA_ALWAYS_LICENSE=1 to force)
 #
 # History: before 2026-04-07, speedtest stderr was often "2>/dev/null" — C++/Ookla failures were invisible.
 # We now log to speedtest.stderr.log and set HOME=/var/lib/netperf-ookla so ~/.config/ookla is writable.
@@ -91,6 +91,10 @@ START() {
 	# License/GDPR: required for non-interactive runs. Direct exec avoids bash -c quoting bugs; PTY retries SIGABRT.
 	# NETPERF_SKIP_TRICKLE=1 disables rate limit. NETPERF_OOKLA_OFF=1 skips all Ookla runs (iperf still runs).
 	STERR="$STORAGE_LOCATION/speedtest.stderr.log"
+	OOKLA_LIC=(--accept-license --accept-gdpr)
+	if [ "${NETPERF_OOKLA_ALWAYS_LICENSE:-0}" != "1" ] && [ -f "$HOME/.config/ookla/speedtest-cli.json" ]; then
+		OOKLA_LIC=()
+	fi
 	run_st() {
 		local outfile="$1"
 		shift
@@ -103,7 +107,7 @@ START() {
 			local try="$1"
 			shift
 			local cmd
-			cmd=$(printf '%q ' "$try" --accept-license --accept-gdpr "$@" -f json)
+			cmd=$(printf '%q ' "$try" "${OOKLA_LIC[@]}" "$@" -f json)
 			SHELL=/bin/bash script -q -e -c "$cmd" /dev/null >>"$outfile" 2>>"$STERR"
 			return $?
 		}
@@ -116,7 +120,7 @@ START() {
 				_ookla_pty "$try" "$@"
 				return $?
 			fi
-			if "$try" --accept-license --accept-gdpr "$@" -f json >>"$outfile" 2>>"$STERR"; then
+			if "$try" "${OOKLA_LIC[@]}" "$@" -f json >>"$outfile" 2>>"$STERR"; then
 				return 0
 			fi
 			xrc=$?
@@ -130,7 +134,7 @@ START() {
 			return "$xrc"
 		}
 		if [ -n "$LIMIT_KBPS" ] && command -v trickle >/dev/null 2>&1; then
-			if trickle -d "$LIMIT_KBPS" -u "$LIMIT_KBPS" "$bin" --accept-license --accept-gdpr "$@" -f json >>"$outfile" 2>>"$STERR"; then
+			if trickle -d "$LIMIT_KBPS" -u "$LIMIT_KBPS" "$bin" "${OOKLA_LIC[@]}" "$@" -f json >>"$outfile" 2>>"$STERR"; then
 				rc=0
 			else
 				rc=$?

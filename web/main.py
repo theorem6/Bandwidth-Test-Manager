@@ -949,9 +949,18 @@ async def api_users_set_password(request: Request, _user: tuple[str, str] = Depe
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+def _ookla_license_json_path(home: str) -> Path:
+    return Path(home) / ".config" / "ookla" / "speedtest-cli.json"
+
+
 def _ookla_cli_cmd(bin_exe: str, *args: str) -> list[str]:
-    """Ookla speedtest args for non-interactive use (avoids crashes when license/GDPR prompts cannot run)."""
-    return [bin_exe, "--accept-license", "--accept-gdpr", *args]
+    """Build speedtest argv; omit --accept-license once speedtest-cli.json exists (less EULA on stderr)."""
+    home = os.environ.get("NETPERF_OOKLA_HOME", "/var/lib/netperf-ookla")
+    cmd: list[str] = [bin_exe]
+    if os.environ.get("NETPERF_OOKLA_ALWAYS_LICENSE") == "1" or not _ookla_license_json_path(home).is_file():
+        cmd.extend(["--accept-license", "--accept-gdpr"])
+    cmd.extend(args)
+    return cmd
 
 
 def _ookla_speedtest_env() -> dict[str, str]:

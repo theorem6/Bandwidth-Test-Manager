@@ -172,6 +172,7 @@ grep -q -- '--accept-license' /bin/netperf-tester 2>/dev/null || echo "WARNING: 
 echo "=== Ookla CLI state directory (NETPERF_OOKLA_HOME default: /var/lib/netperf-ookla) ==="
 mkdir -p /var/lib/netperf-ookla/.config/ookla
 chmod 755 /var/lib/netperf-ookla /var/lib/netperf-ookla/.config /var/lib/netperf-ookla/.config/ookla 2>/dev/null || true
+# License seed runs inside bwm_install_all_cli_dependencies (linux-deps.sh) after speedtest is installed.
 
 echo "=== Config and log directories ==="
 mkdir -p /etc/netperf /var/log/netperf

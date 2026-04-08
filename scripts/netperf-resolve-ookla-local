@@ -36,6 +36,16 @@ LIST_TIMEOUT_SEC = 90
 OOKLA_NONINTERACTIVE = ("--accept-license", "--accept-gdpr")
 
 
+def ookla_speedtest_cmd(bin_path: str, *args: str) -> list[str]:
+    """Pass --accept-license only until speedtest-cli.json exists."""
+    home = os.environ.get("NETPERF_OOKLA_HOME", "/var/lib/netperf-ookla")
+    cmd = [bin_path]
+    if os.environ.get("NETPERF_OOKLA_ALWAYS_LICENSE") == "1" or not Path(home, ".config", "ookla", "speedtest-cli.json").is_file():
+        cmd.extend(OOKLA_NONINTERACTIVE)
+    cmd.extend(args)
+    return cmd
+
+
 def ookla_subprocess_env() -> dict[str, str]:
     """Ookla stores settings under $HOME/.config/ookla; must be writable."""
     home = os.environ.get("NETPERF_OOKLA_HOME", "/var/lib/netperf-ookla")
@@ -225,7 +235,7 @@ def write_isp_cache(path: Path, isp: str) -> None:
 def probe_isp(bin_path: str) -> str:
     try:
         r = subprocess.run(
-            [bin_path, *OOKLA_NONINTERACTIVE, "-f", "json"],
+            ookla_speedtest_cmd(bin_path, "-f", "json"),
             capture_output=True,
             text=True,
             timeout=PROBE_TIMEOUT_SEC,
@@ -263,7 +273,7 @@ def main() -> None:
     bin_path = "/usr/local/bin/speedtest" if Path("/usr/local/bin/speedtest").exists() else "speedtest"
     try:
         r = subprocess.run(
-            [bin_path, *OOKLA_NONINTERACTIVE, "-L", "-f", "json"],
+            ookla_speedtest_cmd(bin_path, "-L", "-f", "json"),
             capture_output=True,
             text=True,
             timeout=LIST_TIMEOUT_SEC,

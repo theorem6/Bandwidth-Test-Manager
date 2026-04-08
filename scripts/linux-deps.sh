@@ -195,6 +195,18 @@ bwm_ensure_ookla_config_home() {
 	chmod 755 "$h" "$h/.config" "$h/.config/ookla" 2>/dev/null || true
 }
 
+# One-time license/GDPR acceptance so scheduled runs need not pass --accept-license every time (less EULA spam).
+bwm_ookla_seed_license() {
+	local h st
+	h="${NETPERF_OOKLA_HOME:-/var/lib/netperf-ookla}"
+	st=$(command -v speedtest 2>/dev/null) || return 0
+	[ -f "$h/.config/ookla/speedtest-cli.json" ] && return 0
+	mkdir -p "$h/.config/ookla"
+	echo "=== Recording Ookla Speedtest CLI license (one-time; NETPERF_OOKLA_HOME=$h) ==="
+	env HOME="$h" TERM="${TERM:-xterm-256color}" TMPDIR="${TMPDIR:-/tmp}" \
+		"$st" --accept-license --accept-gdpr --version >/dev/null 2>&1 || true
+}
+
 # Main entry: CLI tools (speedtest, iperf3, jq, mtr, curl, tar)
 bwm_install_all_cli_dependencies() {
 	local fam mgr
@@ -242,6 +254,7 @@ bwm_install_all_cli_dependencies() {
 	bwm_ensure_ookla_speedtest_symlink
 	bwm_replace_ookla_symlink_with_tarball
 	bwm_ensure_ookla_config_home
+	bwm_ookla_seed_license
 
 	command -v speedtest &>/dev/null || {
 		echo "speedtest CLI not available after install." >&2
