@@ -188,6 +188,13 @@ bwm_replace_ookla_symlink_with_tarball() {
 	bwm_speedtest_install_official_binary || true
 }
 
+# Ookla CLI writes $HOME/.config/ookla/speedtest-cli.json — must exist and be writable for cron/web.
+bwm_ensure_ookla_config_home() {
+	local h="${NETPERF_OOKLA_HOME:-/var/lib/netperf-ookla}"
+	mkdir -p "$h/.config/ookla"
+	chmod 755 "$h" "$h/.config" "$h/.config/ookla" 2>/dev/null || true
+}
+
 # Main entry: CLI tools (speedtest, iperf3, jq, mtr, curl, tar)
 bwm_install_all_cli_dependencies() {
 	local fam mgr
@@ -234,6 +241,7 @@ bwm_install_all_cli_dependencies() {
 
 	bwm_ensure_ookla_speedtest_symlink
 	bwm_replace_ookla_symlink_with_tarball
+	bwm_ensure_ookla_config_home
 
 	command -v speedtest &>/dev/null || {
 		echo "speedtest CLI not available after install." >&2

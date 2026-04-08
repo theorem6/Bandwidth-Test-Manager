@@ -1,5 +1,5 @@
 #!/bin/bash
-# netperf-tester rev 2026-04-11 (Ookla: direct exec first, PTY retry on abort; NETPERF_OOKLA_OFF=1 skips tests)
+# netperf-tester rev 2026-04-12 (writable HOME for Ookla ~/.config/ookla; NETPERF_OOKLA_HOME overrides)
 set -eu
 
 ### Root check ###
@@ -37,10 +37,10 @@ HELP() {
 START() {
 	# Non-login shells (cron, systemd) often omit /usr/local/bin; Ookla CLI installs there.
 	export PATH="/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-	# Ookla stores license state under $HOME; cron sometimes leaves HOME unset for root.
-	if [ "$(id -u)" -eq 0 ]; then
-		export HOME="${HOME:-/root}"
-	fi
+	# Ookla writes $HOME/.config/ookla/speedtest-cli.json — /root may be unwritable (hardening, containers).
+	export HOME="${NETPERF_OOKLA_HOME:-/var/lib/netperf-ookla}"
+	mkdir -p "$HOME/.config/ookla"
+	chmod 755 "$HOME" "$HOME/.config" "$HOME/.config/ookla" 2>/dev/null || true
 	# Cron/systemd often omit these; some C++ CLIs misbehave with an empty TERM or TMPDIR.
 	export TERM="${TERM:-xterm-256color}"
 	export TMPDIR="${TMPDIR:-/tmp}"

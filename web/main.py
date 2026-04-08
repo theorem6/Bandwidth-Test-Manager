@@ -948,6 +948,17 @@ def _ookla_cli_cmd(bin_exe: str, *args: str) -> list[str]:
     return [bin_exe, "--accept-license", "--accept-gdpr", *args]
 
 
+def _ookla_speedtest_env() -> dict[str, str]:
+    """Ookla writes under $HOME/.config/ookla; use a writable service path (not necessarily /root)."""
+    home = os.environ.get("NETPERF_OOKLA_HOME", "/var/lib/netperf-ookla")
+    try:
+        (Path(home) / ".config" / "ookla").mkdir(parents=True, mode=0o755, exist_ok=True)
+    except OSError:
+        pass
+    e: dict[str, str] = {**os.environ, "HOME": home, "DEBIAN_FRONTEND": "noninteractive"}
+    return e
+
+
 def _run_speedtest_list(cmd: list[str], env: dict) -> tuple[str, str, int]:
     """Run speedtest -L (with optional -f json). Returns (stdout, stderr, returncode)."""
     try:
@@ -990,7 +1001,7 @@ def api_speedtest_servers(
             )
         return JSONResponse({"servers": rows})
 
-    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    env = _ookla_speedtest_env()
     error_note: Optional[str] = None
     servers: list[dict] = []
 

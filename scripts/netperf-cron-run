@@ -4,6 +4,10 @@
 set -eu
 # Cron's default PATH is often minimal; Ookla's speedtest is usually in /usr/local/bin.
 export PATH="/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+# Ookla needs writable $HOME/.config/ookla (override with NETPERF_OOKLA_HOME).
+export HOME="${NETPERF_OOKLA_HOME:-/var/lib/netperf-ookla}"
+mkdir -p "$HOME/.config/ookla"
+chmod 755 "$HOME" "$HOME/.config" "$HOME/.config/ookla" 2>/dev/null || true
 if [ "$(id -u)" -ne 0 ]; then
 	echo "Must be run as root." >&2
 	exit 1
