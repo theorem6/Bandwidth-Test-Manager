@@ -167,7 +167,7 @@ bwm_install_all_cli_dependencies
 echo "=== Installing scripts to /bin ==="
 cp -f scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter scripts/netperf-cron-run scripts/netperf-resolve-ookla-local /bin/
 chmod 755 /bin/netperf-scheduler /bin/netperf-tester /bin/netperf-reporter /bin/netperf-cron-run /bin/netperf-resolve-ookla-local
-sed -n '1,2p' /bin/netperf-tester | grep -q 'run_st' || echo "WARNING: /bin/netperf-tester may be stale (expected comment mentions run_st). Re-copy from this repo's scripts/netperf-tester." >&2
+grep -q -- '--accept-license' /bin/netperf-tester 2>/dev/null || echo "WARNING: /bin/netperf-tester may be stale (missing Ookla --accept-license). Re-copy scripts/netperf-tester from this repo." >&2
 
 echo "=== Config and log directories ==="
 mkdir -p /etc/netperf /var/log/netperf
