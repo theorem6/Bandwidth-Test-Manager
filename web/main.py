@@ -956,6 +956,10 @@ def _ookla_speedtest_env() -> dict[str, str]:
     except OSError:
         pass
     e: dict[str, str] = {**os.environ, "HOME": home, "DEBIAN_FRONTEND": "noninteractive"}
+    if not (e.get("TERM") or "").strip():
+        e["TERM"] = "xterm-256color"
+    if not (e.get("TMPDIR") or "").strip():
+        e["TMPDIR"] = "/tmp"
     return e
 
 

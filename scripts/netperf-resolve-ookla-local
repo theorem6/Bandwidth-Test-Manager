@@ -43,7 +43,12 @@ def ookla_subprocess_env() -> dict[str, str]:
         Path(home, ".config", "ookla").mkdir(parents=True, mode=0o755, exist_ok=True)
     except OSError:
         pass
-    return {**os.environ, "HOME": home, "DEBIAN_FRONTEND": "noninteractive"}
+    e = {**os.environ, "HOME": home, "DEBIAN_FRONTEND": "noninteractive"}
+    if not (e.get("TERM") or "").strip():
+        e["TERM"] = "xterm-256color"
+    if not (e.get("TMPDIR") or "").strip():
+        e["TMPDIR"] = "/tmp"
+    return e
 
 ISP_STOPWORDS = frozenset(
     {

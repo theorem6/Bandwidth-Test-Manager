@@ -169,6 +169,10 @@ cp -f scripts/netperf-scheduler scripts/netperf-tester scripts/netperf-reporter 
 chmod 755 /bin/netperf-scheduler /bin/netperf-tester /bin/netperf-reporter /bin/netperf-cron-run /bin/netperf-resolve-ookla-local
 grep -q -- '--accept-license' /bin/netperf-tester 2>/dev/null || echo "WARNING: /bin/netperf-tester may be stale (missing Ookla --accept-license). Re-copy scripts/netperf-tester from this repo." >&2
 
+echo "=== Ookla CLI state directory (NETPERF_OOKLA_HOME default: /var/lib/netperf-ookla) ==="
+mkdir -p /var/lib/netperf-ookla/.config/ookla
+chmod 755 /var/lib/netperf-ookla /var/lib/netperf-ookla/.config /var/lib/netperf-ookla/.config/ookla 2>/dev/null || true
+
 echo "=== Config and log directories ==="
 mkdir -p /etc/netperf /var/log/netperf
 if [ ! -f /etc/netperf/config.json ]; then
