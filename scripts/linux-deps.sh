@@ -23,6 +23,10 @@ bwm_speedtest_install_official_binary() {
 		mv -f "$TMP/speedtest" /usr/local/bin/speedtest
 		chmod 755 /usr/local/bin/speedtest
 		echo "Installed official Ookla Speedtest CLI -> /usr/local/bin/speedtest"
+		if ! env HOME="${HOME:-/root}" TERM="${TERM:-xterm-256color}" TMPDIR="${TMPDIR:-/tmp}" \
+			/usr/local/bin/speedtest --accept-license --accept-gdpr --version >/dev/null 2>&1; then
+			echo "WARNING: /usr/local/bin/speedtest --version failed — wrong arch, bad libc, or corrupt download. Replace tarball or use distro packages." >&2
+		fi
 		rm -rf "$TMP"
 		return 0
 	fi

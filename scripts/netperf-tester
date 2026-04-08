@@ -1,5 +1,5 @@
 #!/bin/bash
-# netperf-tester rev 2026-04-10 (Ookla + optional PTY via script(1); must match repo scripts/netperf-tester)
+# netperf-tester rev 2026-04-11 (Ookla: direct exec first, PTY retry on abort; NETPERF_OOKLA_OFF=1 skips tests)
 set -eu
 
 ### Root check ###
@@ -41,6 +41,11 @@ START() {
 	if [ "$(id -u)" -eq 0 ]; then
 		export HOME="${HOME:-/root}"
 	fi
+	# Cron/systemd often omit these; some C++ CLIs misbehave with an empty TERM or TMPDIR.
+	export TERM="${TERM:-xterm-256color}"
+	export TMPDIR="${TMPDIR:-/tmp}"
+	export USER="${USER:-$(id -un 2>/dev/null || echo root)}"
+	export LOGNAME="${LOGNAME:-$USER}"
 
 	if [ ! -d "$STORAGE_LOCATION" ]; then
 		mkdir -p "$STORAGE_LOCATION"
@@ -80,8 +85,8 @@ START() {
 	# so scheduled runs still produce Speedtest data when only iperf is explicitly configured.
 	# Errors (e.g. missing binary) go to speedtest.stderr.log — install links /usr/local/bin/speedtest.
 	# Use a function so paths are never word-split wrong; LC_ALL=C avoids some libc string crashes in older CLIs.
-	# License/GDPR: required for non-interactive runs. PTY: some Ookla builds still abort without a TTY
-	# (set NETPERF_SPEEDTEST_PTY=0 to force direct execution; NETPERF_SKIP_TRICKLE=1 disables rate limit).
+	# License/GDPR: required for non-interactive runs. Direct exec avoids bash -c quoting bugs; PTY retries SIGABRT.
+	# NETPERF_SKIP_TRICKLE=1 disables rate limit. NETPERF_OOKLA_OFF=1 skips all Ookla runs (iperf still runs).
 	STERR="$STORAGE_LOCATION/speedtest.stderr.log"
 	run_st() {
 		local outfile="$1"
@@ -91,66 +96,62 @@ START() {
 		[ -n "$SPEEDTEST_BIN" ] || return 0
 		local rc=0
 		local bin="$SPEEDTEST_BIN"
-		# Quoted command line for script(1) / bash -c (must not use arrays — works on all bash versions).
-		_ookla_q() {
-			local b="$1"
+		_ookla_pty() {
+			local try="$1"
 			shift
-			printf '%q ' "$b" --accept-license --accept-gdpr "$@" -f json
-		}
-		_ookla_exec() {
-			local trybin="$1"
-			shift
-			local inner
-			inner=$(_ookla_q "$trybin" "$@")
-			if [ "${NETPERF_SPEEDTEST_PTY:-1}" != "0" ] && command -v script >/dev/null 2>&1; then
-				SHELL=/bin/bash script -q -e -c "$inner" /dev/null >>"$outfile" 2>>"$STERR"
-				return $?
-			fi
-			/bin/bash -c "$inner" >>"$outfile" 2>>"$STERR"
+			local cmd
+			cmd=$(printf '%q ' "$try" --accept-license --accept-gdpr "$@" -f json)
+			SHELL=/bin/bash script -q -e -c "$cmd" /dev/null >>"$outfile" 2>>"$STERR"
 			return $?
 		}
-		if [ -n "$LIMIT_KBPS" ] && command -v trickle >/dev/null 2>&1; then
-			local inner_cmd
-			inner_cmd=$(_ookla_q "$bin" "$@")
-			if [ "${NETPERF_SPEEDTEST_PTY:-1}" != "0" ] && command -v script >/dev/null 2>&1; then
-				if trickle -d "$LIMIT_KBPS" -u "$LIMIT_KBPS" env SHELL=/bin/bash script -q -e -c "$inner_cmd" /dev/null >>"$outfile" 2>>"$STERR"; then
-					rc=0
-				else
-					rc=$?
-				fi
-			else
-				if trickle -d "$LIMIT_KBPS" -u "$LIMIT_KBPS" bash -c "$inner_cmd" >>"$outfile" 2>>"$STERR"; then
-					rc=0
-				else
-					rc=$?
-				fi
+		# Direct argv to Ookla (no bash -c); on abort (134/139) retry under pseudo-TTY if script(1) exists.
+		_ookla_try() {
+			local try="$1"
+			local xrc
+			shift
+			if [ "${NETPERF_FORCE_PTY:-0}" = "1" ] && command -v script >/dev/null 2>&1; then
+				_ookla_pty "$try" "$@"
+				return $?
 			fi
-			if [ "$rc" -ne 0 ]; then
+			if "$try" --accept-license --accept-gdpr "$@" -f json >>"$outfile" 2>>"$STERR"; then
+				return 0
+			fi
+			xrc=$?
+			if { [ "$xrc" -eq 134 ] || [ "$xrc" -eq 139 ]; } && command -v script >/dev/null 2>&1; then
 				{
-					echo "netperf-tester: speedtest exited $rc with trickle; retrying without rate limit"
+					echo "netperf-tester: speedtest rc=$xrc (abort); retrying under pseudo-TTY — if this persists, reinstall /usr/local/bin/speedtest from https://www.speedtest.net/apps/cli"
 				} >>"$STERR"
-				if _ookla_exec "$bin" "$@"; then
-					rc=0
-				else
-					rc=$?
-				fi
+				_ookla_pty "$try" "$@"
+				return $?
 			fi
-		else
-			if _ookla_exec "$bin" "$@"; then
+			return "$xrc"
+		}
+		if [ -n "$LIMIT_KBPS" ] && command -v trickle >/dev/null 2>&1; then
+			if trickle -d "$LIMIT_KBPS" -u "$LIMIT_KBPS" "$bin" --accept-license --accept-gdpr "$@" -f json >>"$outfile" 2>>"$STERR"; then
 				rc=0
 			else
 				rc=$?
+				{
+					echo "netperf-tester: speedtest exited $rc with trickle; retrying without rate limit"
+				} >>"$STERR"
+				_ookla_try "$bin" "$@"
+				rc=$?
 			fi
+		else
+			_ookla_try "$bin" "$@"
+			rc=$?
 		fi
 		if [ "$rc" -ne 0 ] && [ "$bin" != "/usr/local/bin/speedtest" ] && [ -x /usr/local/bin/speedtest ]; then
 			{
 				echo "netperf-tester: speedtest exited $rc with $bin; retrying with /usr/local/bin/speedtest"
 			} >>"$STERR"
-			_ookla_exec /usr/local/bin/speedtest "$@" || true
+			_ookla_try /usr/local/bin/speedtest "$@" || true
 		fi
 		return 0
 	}
-	if [ -n "$SPEEDTEST_BIN" ]; then
+	if [ "${NETPERF_OOKLA_OFF:-0}" = "1" ]; then
+		echo "netperf-tester: NETPERF_OOKLA_OFF=1 — skipping all Ookla speedtest runs (iperf unchanged)" >>"$STERR"
+	elif [ -n "$SPEEDTEST_BIN" ]; then
 		OOKLA_N=$(jq '.ookla_servers // [] | length' "$CONFIG_FILE" 2>/dev/null || echo 0)
 		if [ "${OOKLA_N:-0}" -eq 0 ]; then
 			outfile="$STORAGE_LOCATION/0_speedtest-auto"
