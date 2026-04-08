@@ -16,6 +16,11 @@
 
 set -e
 
+# Cron often runs with no HOME; Ookla's speedtest binary aborts without a writable $HOME/.config/ookla.
+export HOME="${NETPERF_OOKLA_HOME:-${HOME:-/var/lib/netperf-ookla}}"
+export NETPERF_OOKLA_HOME="$HOME"
+mkdir -p "$HOME/.config/ookla" 2>/dev/null || true
+
 MAIN_URL="${BWM_MAIN_URL:-}"
 NODE_TOKEN="${BWM_NODE_TOKEN:-}"
 

@@ -36,7 +36,11 @@ bwm_speedtest_install_official_binary() {
 
 bwm_speedtest_needs_official_binary() {
 	command -v speedtest &>/dev/null || return 0
-	timeout 15 speedtest --accept-license --accept-gdpr -L -f json &>/dev/null && return 1
+	local h
+	h="${NETPERF_OOKLA_HOME:-/var/lib/netperf-ookla}"
+	[ -n "$h" ] || h="/var/lib/netperf-ookla"
+	timeout 15 env HOME="$h" TERM="${TERM:-xterm-256color}" TMPDIR="${TMPDIR:-/tmp}" \
+		speedtest --accept-license --accept-gdpr -L -f json &>/dev/null && return 1
 	return 0
 }
 

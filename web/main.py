@@ -31,6 +31,12 @@ def _netperf_log_date_str() -> str:
     return datetime.now().strftime("%Y%m%d")
 
 
+def _netperf_ookla_home() -> str:
+    """Writable Ookla config dir ($HOME/.config/ookla). Empty NETPERF_OOKLA_HOME must not win over default."""
+    raw = (os.environ.get("NETPERF_OOKLA_HOME") or "").strip()
+    return raw if raw else "/var/lib/netperf-ookla"
+
+
 # Built-in users (used when config auth_users is missing or empty). username -> (password, role)
 AUTH_USERS_BUILTIN = {
     "bwadmin": ("unl0ck", "admin"),
@@ -955,7 +961,7 @@ def _ookla_license_json_path(home: str) -> Path:
 
 def _ookla_cli_cmd(bin_exe: str, *args: str) -> list[str]:
     """Build speedtest argv; omit --accept-license once speedtest-cli.json exists (less EULA on stderr)."""
-    home = os.environ.get("NETPERF_OOKLA_HOME", "/var/lib/netperf-ookla")
+    home = _netperf_ookla_home()
     cmd: list[str] = [bin_exe]
     if os.environ.get("NETPERF_OOKLA_ALWAYS_LICENSE") == "1" or not _ookla_license_json_path(home).is_file():
         cmd.extend(["--accept-license", "--accept-gdpr"])
@@ -965,12 +971,12 @@ def _ookla_cli_cmd(bin_exe: str, *args: str) -> list[str]:
 
 def _ookla_speedtest_env() -> dict[str, str]:
     """Ookla writes under $HOME/.config/ookla; use a writable service path (not necessarily /root)."""
-    home = os.environ.get("NETPERF_OOKLA_HOME", "/var/lib/netperf-ookla")
+    home = _netperf_ookla_home()
     try:
         (Path(home) / ".config" / "ookla").mkdir(parents=True, mode=0o755, exist_ok=True)
     except OSError:
         pass
-    e: dict[str, str] = {**os.environ, "HOME": home, "DEBIAN_FRONTEND": "noninteractive"}
+    e: dict[str, str] = {**os.environ, "HOME": home, "NETPERF_OOKLA_HOME": home, "DEBIAN_FRONTEND": "noninteractive"}
     if not (e.get("TERM") or "").strip():
         e["TERM"] = "xterm-256color"
     if not (e.get("TMPDIR") or "").strip():
@@ -1207,12 +1213,18 @@ def api_run_now(_user: tuple[str, str] = Depends(require_admin)):
     import threading
     def run():
         try:
+            ookla_h = _netperf_ookla_home()
             r = subprocess.run(
                 cmd,
                 capture_output=True,
                 timeout=600,
                 cwd="/",
-                env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+                env={
+                    **os.environ,
+                    "DEBIAN_FRONTEND": "noninteractive",
+                    "HOME": ookla_h,
+                    "NETPERF_OOKLA_HOME": ookla_h,
+                },
             )
             try:
                 run_now_log.write_text(
