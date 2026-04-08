@@ -32,6 +32,9 @@ CACHE_TTL_SEC = 7 * 24 * 3600
 PROBE_TIMEOUT_SEC = 120
 LIST_TIMEOUT_SEC = 90
 
+# Non-interactive / cron-safe; avoids crashes when license prompts cannot run (TTY).
+OOKLA_NONINTERACTIVE = ("--accept-license", "--accept-gdpr")
+
 ISP_STOPWORDS = frozenset(
     {
         "inc",
@@ -207,7 +210,7 @@ def write_isp_cache(path: Path, isp: str) -> None:
 def probe_isp(bin_path: str) -> str:
     try:
         r = subprocess.run(
-            [bin_path, "-f", "json"],
+            [bin_path, *OOKLA_NONINTERACTIVE, "-f", "json"],
             capture_output=True,
             text=True,
             timeout=PROBE_TIMEOUT_SEC,
@@ -219,6 +222,8 @@ def probe_isp(bin_path: str) -> str:
 
 
 def main() -> None:
+    if os.name == "posix" and not os.environ.get("HOME") and hasattr(os, "geteuid") and os.geteuid() == 0:
+        os.environ.setdefault("HOME", "/root")
     config_path = Path(
         sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NETPERF_CONFIG", "/etc/netperf/config.json")
     )
@@ -245,7 +250,7 @@ def main() -> None:
     bin_path = "/usr/local/bin/speedtest" if Path("/usr/local/bin/speedtest").exists() else "speedtest"
     try:
         r = subprocess.run(
-            [bin_path, "-L", "-f", "json"],
+            [bin_path, *OOKLA_NONINTERACTIVE, "-L", "-f", "json"],
             capture_output=True,
             text=True,
             timeout=LIST_TIMEOUT_SEC,

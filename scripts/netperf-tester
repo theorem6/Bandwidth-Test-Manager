@@ -1,5 +1,5 @@
 #!/bin/bash
-# netperf-tester rev 2026-04-08 (run_st + trickle retry + /usr/local fallback — must match repo scripts/netperf-tester)
+# netperf-tester rev 2026-04-09 (run_st + Ookla --accept-license/--accept-gdpr for cron — must match repo)
 set -eu
 
 ### Root check ###
@@ -37,6 +37,10 @@ HELP() {
 START() {
 	# Non-login shells (cron, systemd) often omit /usr/local/bin; Ookla CLI installs there.
 	export PATH="/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+	# Ookla stores license state under $HOME; cron sometimes leaves HOME unset for root.
+	if [ "$(id -u)" -eq 0 ]; then
+		export HOME="${HOME:-/root}"
+	fi
 
 	if [ ! -d "$STORAGE_LOCATION" ]; then
 		mkdir -p "$STORAGE_LOCATION"
@@ -76,7 +80,9 @@ START() {
 	# so scheduled runs still produce Speedtest data when only iperf is explicitly configured.
 	# Errors (e.g. missing binary) go to speedtest.stderr.log — install links /usr/local/bin/speedtest.
 	# Use a function so paths are never word-split wrong; LC_ALL=C avoids some libc string crashes in older CLIs.
+	# Non-interactive flags avoid std::logic_error / basic_string null when license prompts cannot run (cron).
 	STERR="$STORAGE_LOCATION/speedtest.stderr.log"
+	OOKLA_NONI=(--accept-license --accept-gdpr)
 	run_st() {
 		local outfile="$1"
 		shift
@@ -86,21 +92,21 @@ START() {
 		local rc=0
 		local bin="$SPEEDTEST_BIN"
 		if [ -n "$LIMIT_KBPS" ] && command -v trickle >/dev/null 2>&1; then
-			if trickle -d "$LIMIT_KBPS" -u "$LIMIT_KBPS" "$bin" "$@" -f json >>"$outfile" 2>>"$STERR"; then
+			if trickle -d "$LIMIT_KBPS" -u "$LIMIT_KBPS" "$bin" "${OOKLA_NONI[@]}" "$@" -f json >>"$outfile" 2>>"$STERR"; then
 				rc=0
 			else
 				rc=$?
 				{
 					echo "netperf-tester: speedtest exited $rc with trickle; retrying without rate limit"
 				} >>"$STERR"
-				if "$bin" "$@" -f json >>"$outfile" 2>>"$STERR"; then
+				if "$bin" "${OOKLA_NONI[@]}" "$@" -f json >>"$outfile" 2>>"$STERR"; then
 					rc=0
 				else
 					rc=$?
 				fi
 			fi
 		else
-			if "$bin" "$@" -f json >>"$outfile" 2>>"$STERR"; then
+			if "$bin" "${OOKLA_NONI[@]}" "$@" -f json >>"$outfile" 2>>"$STERR"; then
 				rc=0
 			else
 				rc=$?
@@ -110,7 +116,7 @@ START() {
 			{
 				echo "netperf-tester: speedtest exited $rc with $bin; retrying with /usr/local/bin/speedtest"
 			} >>"$STERR"
-			/usr/local/bin/speedtest "$@" -f json >>"$outfile" 2>>"$STERR" || true
+			/usr/local/bin/speedtest "${OOKLA_NONI[@]}" "$@" -f json >>"$outfile" 2>>"$STERR" || true
 		fi
 		return 0
 	}

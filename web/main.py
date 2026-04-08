@@ -943,6 +943,11 @@ async def api_users_set_password(request: Request, _user: tuple[str, str] = Depe
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+def _ookla_cli_cmd(bin_exe: str, *args: str) -> list[str]:
+    """Ookla speedtest args for non-interactive use (avoids crashes when license/GDPR prompts cannot run)."""
+    return [bin_exe, "--accept-license", "--accept-gdpr", *args]
+
+
 def _run_speedtest_list(cmd: list[str], env: dict) -> tuple[str, str, int]:
     """Run speedtest -L (with optional -f json). Returns (stdout, stderr, returncode)."""
     try:
@@ -993,8 +998,8 @@ def api_speedtest_servers(
     speedtest_bin = "/usr/local/bin/speedtest" if Path("/usr/local/bin/speedtest").exists() else "speedtest"
 
     try:
-        # Try JSON first (some Ookla builds crash with -f json: "basic_string::_M_construct null not valid")
-        out, err, code = _run_speedtest_list([speedtest_bin, "-L", "-f", "json"], env)
+        # JSON list; --accept-license/--accept-gdpr required for non-TTY (cron/service).
+        out, err, code = _run_speedtest_list(_ookla_cli_cmd(speedtest_bin, "-L", "-f", "json"), env)
         if out:
             servers = _parse_speedtest_servers_json(out)
         if not out or (code != 0 and not servers):
@@ -1005,7 +1010,7 @@ def api_speedtest_servers(
     # Fallback 1: plain text with same binary (no -f json)
     if not servers:
         try:
-            out, err, _ = _run_speedtest_list([speedtest_bin, "-L"], env)
+            out, err, _ = _run_speedtest_list(_ookla_cli_cmd(speedtest_bin, "-L"), env)
             if out:
                 servers = _parse_speedtest_servers_text(out)
                 if servers and error_note:
@@ -1021,7 +1026,7 @@ def api_speedtest_servers(
     # Fallback 2: if we still have no servers and default was "speedtest", try official binary
     if not servers and speedtest_bin == "speedtest" and Path("/usr/local/bin/speedtest").exists():
         try:
-            out, err, _ = _run_speedtest_list(["/usr/local/bin/speedtest", "-L"], env)
+            out, err, _ = _run_speedtest_list(_ookla_cli_cmd("/usr/local/bin/speedtest", "-L"), env)
             if out:
                 servers = _parse_speedtest_servers_text(out)
                 error_note = "Server list from text (JSON list failed on this Speedtest build)." if error_note else None

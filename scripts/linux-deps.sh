@@ -32,7 +32,7 @@ bwm_speedtest_install_official_binary() {
 
 bwm_speedtest_needs_official_binary() {
 	command -v speedtest &>/dev/null || return 0
-	timeout 15 speedtest -L -f json &>/dev/null && return 1
+	timeout 15 speedtest --accept-license --accept-gdpr -L -f json &>/dev/null && return 1
 	return 0
 }
 
