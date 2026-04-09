@@ -4,16 +4,15 @@
   import Scheduler from './Scheduler.svelte';
   import Settings from './Settings.svelte';
   import Setup from './Setup.svelte';
-  import Logs from './Logs.svelte';
   import RemoteNodes from './RemoteNodes.svelte';
   import NodeView from './NodeView.svelte';
+  import VoiceReference from './VoiceReference.svelte';
   import { getStatus, schedulerStart, schedulerStop, loginWithCredentials } from './lib/api';
   import { auth } from './lib/auth';
   import { loading } from './lib/stores';
   import { initTheme } from './lib/theme';
-  import { branding, loadBranding, effectiveLogo, effectiveTitle, effectiveTagline, effectiveLogoAlt } from './lib/branding';
 
-  type View = 'dashboard' | 'scheduler' | 'settings' | 'setup' | 'logs' | 'nodes' | 'node';
+  type View = 'dashboard' | 'scheduler' | 'settings' | 'setup' | 'nodes' | 'node' | 'voice';
   let currentView: View = 'dashboard';
   let selectedNodeId: string | null = null;
   let selectedNodeName = '';
@@ -30,11 +29,6 @@
   let scheduleBusy = false;
   $: loadingVal = $loading;
   $: user = $auth;
-  $: brand = $branding;
-  $: logoSrc = effectiveLogo(brand);
-  $: titleText = effectiveTitle(brand);
-  $: taglineText = effectiveTagline(brand);
-  $: logoAlt = effectiveLogoAlt(brand, titleText);
 
   function openNodeDashboard(id: string, name: string) {
     selectedNodeId = id;
@@ -110,7 +104,6 @@
 
   onMount(() => {
     initTheme();
-    loadBranding().catch(() => {});
     loadStatus();
     const id = setInterval(loadStatus, 30000);
     return () => clearInterval(id);
@@ -131,12 +124,10 @@
           <i class="bi bi-list" style="font-size:1.5rem"></i>
         </button>
         <a class="navbar-brand brand-wrap text-decoration-none d-flex align-items-center" href="/netperf/">
-          <img src={logoSrc} alt={logoAlt} class="brand-logo" />
+          <img src="/netperf/static/wisptools-logo.svg" alt="wisptools.io" class="wisptools-logo" />
           <div>
-            <span class="brand-title">{titleText}</span>
-            {#if taglineText}
-              <p class="brand-subtitle mb-0">{taglineText}</p>
-            {/if}
+            <span class="brand-title">Bandwidth Test Manager</span>
+            <p class="brand-subtitle mb-0">wisptools.io</p>
           </div>
         </a>
         <div class="navbar-nav ms-auto align-items-center">
@@ -166,20 +157,18 @@
           <a href="/netperf/" class="nav-link" class:active={currentView === 'setup'} on:click|preventDefault={() => { currentView = 'setup'; sidebarOpen = false; }}>
             <i class="bi bi-tools"></i> Setup
           </a>
-          {#if user.role === 'admin'}
-            <a href="/netperf/" class="nav-link" class:active={currentView === 'logs'} on:click|preventDefault={() => { currentView = 'logs'; sidebarOpen = false; }}>
-              <i class="bi bi-journal-text"></i> Logs
-            </a>
-          {/if}
           <a href="/netperf/" class="nav-link" class:active={currentView === 'nodes' || currentView === 'node'} on:click|preventDefault={() => { currentView = 'nodes'; selectedNodeId = null; sidebarOpen = false; }}>
             <i class="bi bi-hdd-network"></i> Remote nodes
+          </a>
+          <a href="/netperf/" class="nav-link" class:active={currentView === 'voice'} on:click|preventDefault={() => { currentView = 'voice'; sidebarOpen = false; }}>
+            <i class="bi bi-telephone"></i> Voice / SIP domain
           </a>
         </nav>
       </aside>
 
       <main class="content">
         <h1 class="h4 mb-3 mb-md-4 page-title">
-          {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : currentView === 'setup' ? 'Setup' : currentView === 'logs' ? 'Logs' : currentView === 'nodes' ? 'Remote nodes' : currentView === 'node' ? selectedNodeName || 'Node' : 'Dashboard'}
+          {currentView === 'dashboard' ? 'Dashboard' : currentView === 'scheduler' ? 'Scheduler' : currentView === 'settings' ? 'Settings' : currentView === 'setup' ? 'Setup' : currentView === 'nodes' ? 'Remote nodes' : currentView === 'voice' ? 'Voice / SIP domain' : currentView === 'node' ? selectedNodeName || 'Node' : 'Dashboard'}
         </h1>
         {#if currentView === 'dashboard'}
           <Dashboard onToast={setToast} showAdminActions={true} />
@@ -190,12 +179,12 @@
           <NodeView nodeId={selectedNodeId} onToast={setToast} />
         {:else if currentView === 'nodes'}
           <RemoteNodes onToast={setToast} onOpenNode={openNodeDashboard} />
+        {:else if currentView === 'voice'}
+          <VoiceReference />
         {:else if currentView === 'scheduler'}
           <Scheduler {loadStatus} onToast={setToast} />
         {:else if currentView === 'settings'}
           <Settings onToast={setToast} />
-        {:else if currentView === 'logs'}
-          <Logs onToast={setToast} />
         {:else}
           <Setup onToast={setToast} />
         {/if}
@@ -208,12 +197,10 @@
     <nav class="navbar navbar-expand navbar-dark bg-primary">
       <div class="container-fluid">
         <a class="navbar-brand brand-wrap text-decoration-none d-flex align-items-center" href="/netperf/">
-          <img src={logoSrc} alt={logoAlt} class="brand-logo" />
+          <img src="/netperf/static/wisptools-logo.svg" alt="wisptools.io" class="wisptools-logo" />
           <div>
-            <span class="brand-title">{titleText}</span>
-            {#if taglineText}
-              <p class="brand-subtitle mb-0">{taglineText}</p>
-            {/if}
+            <span class="brand-title">Bandwidth Test Manager</span>
+            <p class="brand-subtitle mb-0">wisptools.io</p>
           </div>
         </a>
         <div class="navbar-nav ms-auto align-items-center">

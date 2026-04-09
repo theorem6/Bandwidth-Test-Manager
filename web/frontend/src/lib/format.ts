@@ -53,6 +53,23 @@ export function formatDateTimeShort(ts: string): string {
   });
 }
 
+/** Milliseconds since epoch -> compact axis label (time-only for short spans, else date + time). */
+export function formatChartAxisTime(ms: number, rangeMs?: number): string {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '';
+  const longSpan = rangeMs != null && rangeMs > 36 * 60 * 60 * 1000;
+  if (longSpan) {
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  }
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
 /** ISO or YYYY-MM-DDTHH:MM timestamp -> "Mar 13, 2025, 2:30 PM" */
 export function formatDateTime(ts: string): string {
   if (!ts) return '—';
