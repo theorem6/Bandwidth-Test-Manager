@@ -28,6 +28,8 @@
   let historyData: HistoryResponse = { speedtest: [], iperf: [] };
   let historyLoading = false;
   let historyDays = 30;
+  /** Explains how trend charts are aggregated (daily / 6h / per-run). */
+  let trendAggHint = '';
   let timeRangeFilter: 'full' | '6h' | '12h' = 'full';
   let csvDownloading = false;
   let summaryDownloading = false;
@@ -102,6 +104,80 @@
     return out;
   }
 
+  /** Floor to local hour for bucketing frequent runs into readable slots. */
+  function floorToLocalHourMs(ts: string): number | null {
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return null;
+    d.setMinutes(0, 0, 0);
+    d.setSeconds(0, 0);
+    d.setMilliseconds(0);
+    return d.getTime();
+  }
+
+  /** Average multiple runs per hour so hourly cron does not produce 24 jaggy points. */
+  function buildSpeedtestOverTimeHourly(
+    data: Record<string, SpeedtestPoint[]>,
+    key: 'download_bps' | 'upload_bps' | 'latency_ms',
+    extendToNow: boolean
+  ) {
+    const sites = Object.keys(data).filter((site) => (data[site] || []).length > 0);
+    const hourKeys = new Set<string>();
+    sites.forEach((site) => {
+      (data[site] || []).forEach((p) => {
+        const ts = p.timestamp && String(p.timestamp).trim();
+        if (!ts) return;
+        const ms = floorToLocalHourMs(ts);
+        if (ms != null) hourKeys.add(String(ms));
+      });
+    });
+    if (extendToNow) {
+      const nowMs = floorToLocalHourMs(new Date().toISOString());
+      if (nowMs != null) hourKeys.add(String(nowMs));
+    }
+    const sorted = Array.from(hourKeys)
+      .map((k) => Number(k))
+      .filter((n) => !Number.isNaN(n))
+      .sort((a, b) => a - b);
+    const labels = sorted.map((ms) => formatDateTimeShort(new Date(ms).toISOString()));
+    const datasets = sites.map((site, i) => {
+      const sums: Record<string, { sum: number; n: number }> = {};
+      (data[site] || []).forEach((p) => {
+        const ts = p.timestamp && String(p.timestamp).trim();
+        if (!ts) return;
+        const ms = floorToLocalHourMs(ts);
+        if (ms == null) return;
+        const k = String(ms);
+        const v = (p as unknown as Record<string, number>)[key];
+        if (v == null || typeof v !== 'number') return;
+        if (!sums[k]) sums[k] = { sum: 0, n: 0 };
+        sums[k].sum += v;
+        sums[k].n += 1;
+      });
+      let values = sorted.map((ms) => {
+        const s = sums[String(ms)];
+        return s && s.n > 0 ? s.sum / s.n : null;
+      });
+      if (extendToNow && values.length > 0) {
+        const lastKnown = [...values].reverse().find((v) => v != null);
+        if (lastKnown != null) values[values.length - 1] = lastKnown;
+      }
+      return {
+        label: site,
+        data: values,
+        borderColor: COLORS[i % COLORS.length],
+        backgroundColor: COLORS[i % COLORS.length] + '30',
+        borderWidth: 3,
+        fill: true,
+        tension: 0.25,
+        pointRadius: 0,
+        pointHoverRadius: 6,
+        showLine: true,
+        spanGaps: true,
+      };
+    });
+    return { labels, datasets };
+  }
+
   /** Combined over time: all sites, x = sorted timestamps. If extendToNow (and viewing today), add current time so line holds last speed to now. */
   function buildSpeedtestOverTime(
     data: Record<string, SpeedtestPoint[]>,
@@ -119,6 +195,10 @@
       allPoints.forEach((p) => {
         if (p.timestamp && String(p.timestamp).trim()) timeSet.add(p.timestamp);
       });
+      /* Many runs in one day (e.g. hourly cron): one point per local hour (average). */
+      if (timeSet.size > 14 || allPoints.length > 14) {
+        return buildSpeedtestOverTimeHourly(data, key, extendToNow);
+      }
       if (extendToNow) timeSet.add(new Date().toISOString());
       const labels = Array.from(timeSet).sort();
       const displayLabels = labels.map(formatDateTimeShort);
@@ -140,7 +220,7 @@
           backgroundColor: COLORS[i % COLORS.length] + '30',
           borderWidth: 3,
           fill: true,
-          tension: 0,
+          tension: 0.2,
           pointRadius: 0,
           pointHoverRadius: 6,
           showLine: true,
@@ -173,6 +253,64 @@
     return { labels: runLabels, datasets };
   }
 
+  function buildIperfOverTimeHourly(data: Record<string, IperfPoint[]>, extendToNow: boolean) {
+    const sites = Object.keys(data).filter((k) => (data[k] || []).length > 0);
+    const hourKeys = new Set<string>();
+    sites.forEach((site) => {
+      (data[site] || []).forEach((p) => {
+        const ts = p.timestamp && String(p.timestamp).trim();
+        if (!ts) return;
+        const ms = floorToLocalHourMs(ts);
+        if (ms != null) hourKeys.add(String(ms));
+      });
+    });
+    if (extendToNow) {
+      const nowMs = floorToLocalHourMs(new Date().toISOString());
+      if (nowMs != null) hourKeys.add(String(nowMs));
+    }
+    const sorted = Array.from(hourKeys)
+      .map((k) => Number(k))
+      .filter((n) => !Number.isNaN(n))
+      .sort((a, b) => a - b);
+    const labels = sorted.map((ms) => formatDateTimeShort(new Date(ms).toISOString()));
+    const datasets = sites.map((site, i) => {
+      const sums: Record<string, { sum: number; n: number }> = {};
+      (data[site] || []).forEach((p) => {
+        const ts = p.timestamp && String(p.timestamp).trim();
+        if (!ts) return;
+        const ms = floorToLocalHourMs(ts);
+        if (ms == null) return;
+        const k = String(ms);
+        if (p.bits_per_sec == null) return;
+        if (!sums[k]) sums[k] = { sum: 0, n: 0 };
+        sums[k].sum += p.bits_per_sec;
+        sums[k].n += 1;
+      });
+      let values = sorted.map((ms) => {
+        const s = sums[String(ms)];
+        return s && s.n > 0 ? s.sum / s.n : null;
+      });
+      if (extendToNow && values.length > 0) {
+        const lastKnown = [...values].reverse().find((v) => v != null);
+        if (lastKnown != null) values[values.length - 1] = lastKnown;
+      }
+      return {
+        label: site,
+        data: values,
+        borderColor: COLORS[i % COLORS.length],
+        backgroundColor: COLORS[i % COLORS.length] + '30',
+        borderWidth: 3,
+        fill: true,
+        tension: 0.25,
+        pointRadius: 0,
+        pointHoverRadius: 6,
+        showLine: true,
+        spanGaps: true,
+      };
+    });
+    return { labels, datasets };
+  }
+
   /** Combined over time: all iperf series. If extendToNow (viewing today), line holds last value to now. */
   function buildIperfOverTime(data: Record<string, IperfPoint[]>, extendToNow = false) {
     const sites = Object.keys(data).filter((k) => (data[k] || []).length > 0);
@@ -183,6 +321,9 @@
       allPoints.forEach((p) => {
         if (p.timestamp) timeSet.add(p.timestamp);
       });
+      if (timeSet.size > 14 || allPoints.length > 14) {
+        return buildIperfOverTimeHourly(data, extendToNow);
+      }
       if (extendToNow) timeSet.add(new Date().toISOString());
       const labels = Array.from(timeSet).sort();
       const displayLabels = labels.map(formatDateTimeShort);
@@ -203,7 +344,7 @@
           backgroundColor: COLORS[i % COLORS.length] + '30',
           borderWidth: 3,
           fill: true,
-          tension: 0,
+          tension: 0.2,
           pointRadius: 0,
           pointHoverRadius: 6,
           showLine: true,
@@ -259,7 +400,8 @@
     labels: string[],
     datasets: { label: string; data: (number | null)[]; borderColor: string; backgroundColor: string; fill: boolean; tension: number; pointRadius: number; pointHoverRadius: number; borderWidth?: number }[],
     metric: string,
-    metricLabel: string
+    metricLabel: string,
+    uiKind: 'day' | 'trend' = 'day'
   ): Chart | null {
     if (!canvas || !datasets.length) return null;
     /* Modern style: vertical gradient fill (line color → transparent), 3px line, no points by default */
@@ -309,13 +451,23 @@
         scales: {
           x: {
             grid: { display: true, color: 'rgba(0,0,0,0.08)' },
-            ticks: { maxRotation: 45, maxTicksLimit: 14, font: { size: 12 } },
+            ticks: {
+              maxRotation: uiKind === 'trend' ? 28 : 42,
+              minRotation: uiKind === 'trend' ? 0 : 0,
+              maxTicksLimit: uiKind === 'trend' ? 12 : 18,
+              autoSkip: true,
+              autoSkipPadding: 4,
+              font: { size: uiKind === 'trend' ? 11 : 12 },
+            },
           },
           y: {
             beginAtZero: metric !== 'latency_ms',
             title: { display: true, text: metricLabel, font: { size: 13 } },
             grid: { display: true, color: 'rgba(0,0,0,0.08)' },
-            ticks: { font: { size: 12 } },
+            ticks: {
+              font: { size: 12 },
+              maxTicksLimit: metric === 'latency_ms' ? 8 : 7,
+            },
           },
         },
       },
@@ -342,25 +494,25 @@
     if (downloadCanvas && hasSt) {
       const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'download_bps', extendToNow);
       if (labels.length && datasets.length) {
-        downloadChartInst = renderChart(downloadCanvas, labels, datasets, 'download_bps', 'Download (Mbps)');
+        downloadChartInst = renderChart(downloadCanvas, labels, datasets, 'download_bps', 'Download (Mbps)', 'day');
       }
     }
     if (uploadCanvas && hasSt) {
       const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'upload_bps', extendToNow);
       if (labels.length && datasets.length) {
-        uploadChartInst = renderChart(uploadCanvas, labels, datasets, 'upload_bps', 'Upload (Mbps)');
+        uploadChartInst = renderChart(uploadCanvas, labels, datasets, 'upload_bps', 'Upload (Mbps)', 'day');
       }
     }
     if (latencyCanvas && hasSt) {
       const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'latency_ms', extendToNow);
       if (labels.length && datasets.length) {
-        latencyChartInst = renderChart(latencyCanvas, labels, datasets, 'latency_ms', 'Latency (ms)');
+        latencyChartInst = renderChart(latencyCanvas, labels, datasets, 'latency_ms', 'Latency (ms)', 'day');
       }
     }
     if (iperfCanvas && hasIp) {
       const { labels, datasets } = buildIperfOverTime(filteredIperfData, extendToNow);
       if (labels.length && datasets.length) {
-        iperfChartInst = renderChart(iperfCanvas, labels, datasets, 'bits_per_sec', 'Throughput (Mbps)');
+        iperfChartInst = renderChart(iperfCanvas, labels, datasets, 'bits_per_sec', 'Throughput (Mbps)', 'day');
       }
     }
   }
@@ -446,78 +598,257 @@
     return d || '';
   }
 
+  function trendMean(nums: number[]): number {
+    if (!nums.length) return 0;
+    return nums.reduce((a, b) => a + b, 0) / nums.length;
+  }
+
+  /** Local 6-hour bucket start (for dense single-day / short-window trends). */
+  function sixHourFloorMsFromTrendPoint(p: { date: string; timestamp?: string }): number | null {
+    const k = historyTrendSortKey(p);
+    const d = new Date(k);
+    if (Number.isNaN(d.getTime())) return null;
+    const h = Math.floor(d.getHours() / 6) * 6;
+    d.setHours(h, 0, 0, 0);
+    d.setMinutes(0, 0, 0);
+    d.setMilliseconds(0);
+    return d.getTime();
+  }
+
+  function trendDatasetShell(i: number, tension: number, pointRadius: number) {
+    return {
+      borderColor: COLORS[i % COLORS.length],
+      backgroundColor: COLORS[i % COLORS.length] + '30',
+      borderWidth: 3,
+      fill: true,
+      tension,
+      pointRadius,
+      pointHoverRadius: 6,
+      showLine: true,
+      spanGaps: true,
+    };
+  }
+
   function renderTrendCharts() {
-    [trendDownloadChart, trendUploadChart, trendLatencyChart, trendIperfChart].forEach((c) => { if (c) c.destroy(); });
+    trendAggHint = '';
+    [trendDownloadChart, trendUploadChart, trendLatencyChart, trendIperfChart].forEach((c) => {
+      if (c) c.destroy();
+    });
     trendDownloadChart = trendUploadChart = trendLatencyChart = trendIperfChart = null;
-    const sites = [...new Set(historyData.speedtest.map((p) => p.site))];
-    if (sites.length && historyData.speedtest.length && trendDownloadCanvas) {
-      const sortKeys = [...new Set(historyData.speedtest.map(historyTrendSortKey))].sort(
-        (a, b) => new Date(a).getTime() - new Date(b).getTime()
-      );
-      const displayLabels = sortKeys.map((k) => {
-        const ms = new Date(k).getTime();
-        return Number.isNaN(ms) ? k : formatDateTimeShort(k);
-      });
-      const bySite = (key: 'download_bps' | 'upload_bps' | 'latency_ms') => {
-        return sites.map((site, i) => {
-          const byKey: Record<string, number> = {};
-          historyData.speedtest
-            .filter((p) => p.site === site)
-            .forEach((p) => {
-              const v = (p as unknown as Record<string, unknown>)[key];
-              if (v != null && typeof v === 'number') {
-                byKey[historyTrendSortKey(p)] = v;
-              }
-            });
+
+    const st = historyData.speedtest;
+    const ip = historyData.iperf;
+    const hints: string[] = [];
+
+    const speedtestSites = [...new Set(st.map((p) => p.site))];
+    const distinctDaysSt = new Set(st.map((p) => p.date)).size;
+    const nSt = st.length;
+
+    if (speedtestSites.length && nSt && trendDownloadCanvas) {
+      const useDaily = distinctDaysSt >= 2;
+      const useSixHour = !useDaily && nSt >= 10;
+
+      const buildDaily = (key: 'download_bps' | 'upload_bps' | 'latency_ms') => {
+        const dates = [...new Set(st.map((p) => p.date))].sort();
+        const labels = dates.map(formatDateShort);
+        return speedtestSites.map((site, i) => {
+          const byDay: Record<string, number[]> = {};
+          st.filter((p) => p.site === site).forEach((p) => {
+            const v = (p as unknown as Record<string, number>)[key];
+            if (v != null && typeof v === 'number') {
+              if (!byDay[p.date]) byDay[p.date] = [];
+              byDay[p.date].push(v);
+            }
+          });
           return {
             label: site,
-            data: sortKeys.map((k) => (k in byKey ? byKey[k] : null)),
-            borderColor: COLORS[i % COLORS.length],
-            backgroundColor: COLORS[i % COLORS.length] + '30',
-            borderWidth: 3,
-            fill: true,
-            tension: 0,
-            pointRadius: 0,
-            pointHoverRadius: 6,
-            showLine: true,
-            spanGaps: true,
+            data: dates.map((d) => {
+              const arr = byDay[d];
+              return arr?.length ? trendMean(arr) : null;
+            }),
+            ...trendDatasetShell(i, 0.35, 2),
           };
         });
       };
-      trendDownloadChart = renderChart(trendDownloadCanvas, displayLabels, bySite('download_bps'), 'download_bps', 'Download (Mbps)');
-      if (trendUploadCanvas) trendUploadChart = renderChart(trendUploadCanvas, displayLabels, bySite('upload_bps'), 'upload_bps', 'Upload (Mbps)');
-      if (trendLatencyCanvas) trendLatencyChart = renderChart(trendLatencyCanvas, displayLabels, bySite('latency_ms'), 'latency_ms', 'Latency (ms)');
-    }
-    const iperfSites = [...new Set(historyData.iperf.map((p) => p.site))];
-    if (iperfSites.length && historyData.iperf.length && trendIperfCanvas) {
-      const iperfKeys = [...new Set(historyData.iperf.map(historyTrendSortKey))].sort(
-        (a, b) => new Date(a).getTime() - new Date(b).getTime()
-      );
-      const displayLabels = iperfKeys.map((k) => {
-        const ms = new Date(k).getTime();
-        return Number.isNaN(ms) ? k : formatDateTimeShort(k);
-      });
-      const datasets = iperfSites.map((site, i) => {
-        const byKey: Record<string, number> = {};
-        historyData.iperf.filter((p) => p.site === site).forEach((p) => {
-          if (p.bits_per_sec != null) byKey[historyTrendSortKey(p)] = p.bits_per_sec;
+
+      const buildSixHour = (key: 'download_bps' | 'upload_bps' | 'latency_ms') => {
+        const msList = [
+          ...new Set(
+            st
+              .map((p) => sixHourFloorMsFromTrendPoint(p))
+              .filter((x): x is number => x != null)
+          ),
+        ].sort((a, b) => a - b);
+        const labels = msList.map((ms) => formatDateTimeShort(new Date(ms).toISOString()));
+        const datasets = speedtestSites.map((site, i) => {
+          const bucketVals: Record<string, number[]> = {};
+          st.filter((p) => p.site === site).forEach((p) => {
+            const ms = sixHourFloorMsFromTrendPoint(p);
+            if (ms == null) return;
+            const v = (p as unknown as Record<string, number>)[key];
+            if (v == null || typeof v !== 'number') return;
+            const k = String(ms);
+            if (!bucketVals[k]) bucketVals[k] = [];
+            bucketVals[k].push(v);
+          });
+          return {
+            label: site,
+            data: msList.map((ms) => {
+              const arr = bucketVals[String(ms)];
+              return arr?.length ? trendMean(arr) : null;
+            }),
+            ...trendDatasetShell(i, 0.3, 2),
+          };
         });
-        return {
-          label: site,
-          data: iperfKeys.map((k) => (k in byKey ? byKey[k] : null)),
-          borderColor: COLORS[i % COLORS.length],
-          backgroundColor: COLORS[i % COLORS.length] + '30',
-          borderWidth: 3,
-          fill: true,
-          tension: 0,
-          pointRadius: 0,
-          pointHoverRadius: 6,
-          showLine: true,
-          spanGaps: true,
-        };
-      });
-      trendIperfChart = renderChart(trendIperfCanvas, displayLabels, datasets, 'bits_per_sec', 'Throughput (Mbps)');
+        return { labels, datasets };
+      };
+
+      const buildPerRun = (key: 'download_bps' | 'upload_bps' | 'latency_ms') => {
+        const sortKeys = [...new Set(st.map(historyTrendSortKey))].sort(
+          (a, b) => new Date(a).getTime() - new Date(b).getTime()
+        );
+        const labels = sortKeys.map((k) => {
+          const ms = new Date(k).getTime();
+          return Number.isNaN(ms) ? k : formatDateTimeShort(k);
+        });
+        return speedtestSites.map((site, i) => {
+          const byKey: Record<string, number> = {};
+          st.filter((p) => p.site === site).forEach((p) => {
+            const v = (p as unknown as Record<string, number>)[key];
+            if (v != null && typeof v === 'number') byKey[historyTrendSortKey(p)] = v;
+          });
+          return {
+            label: site,
+            data: sortKeys.map((k) => (k in byKey ? byKey[k] : null)),
+            ...trendDatasetShell(i, 0.22, 0),
+          };
+        });
+      };
+
+      let stLabels: string[] = [];
+      let dl: ReturnType<typeof buildDaily>;
+      let ul: ReturnType<typeof buildDaily>;
+      let ll: ReturnType<typeof buildDaily>;
+
+      if (useDaily) {
+        stLabels = [...new Set(st.map((p) => p.date))].sort().map(formatDateShort);
+        dl = buildDaily('download_bps');
+        ul = buildDaily('upload_bps');
+        ll = buildDaily('latency_ms');
+        hints.push(
+          `Speedtest: daily average across ${distinctDaysSt} day(s) (${nSt} run${nSt === 1 ? '' : 's'}).`
+        );
+      } else if (useSixHour) {
+        const six = buildSixHour('download_bps');
+        stLabels = six.labels;
+        dl = buildSixHour('download_bps').datasets;
+        ul = buildSixHour('upload_bps').datasets;
+        ll = buildSixHour('latency_ms').datasets;
+        hints.push(`Speedtest: 6-hour averages (${nSt} run${nSt === 1 ? '' : 's'} in this window).`);
+      } else {
+        const sortKeys = [...new Set(st.map(historyTrendSortKey))].sort(
+          (a, b) => new Date(a).getTime() - new Date(b).getTime()
+        );
+        stLabels = sortKeys.map((k) => {
+          const ms = new Date(k).getTime();
+          return Number.isNaN(ms) ? k : formatDateTimeShort(k);
+        });
+        dl = buildPerRun('download_bps');
+        ul = buildPerRun('upload_bps');
+        ll = buildPerRun('latency_ms');
+        if (nSt > 1) hints.push(`Speedtest: one point per run (${nSt} total).`);
+      }
+
+      trendDownloadChart = renderChart(trendDownloadCanvas, stLabels, dl, 'download_bps', 'Download (Mbps)', 'trend');
+      if (trendUploadCanvas) trendUploadChart = renderChart(trendUploadCanvas, stLabels, ul, 'upload_bps', 'Upload (Mbps)', 'trend');
+      if (trendLatencyCanvas) trendLatencyChart = renderChart(trendLatencyCanvas, stLabels, ll, 'latency_ms', 'Latency (ms)', 'trend');
     }
+
+    const iperfSitesTr = [...new Set(ip.map((p) => p.site))];
+    const distinctDaysIp = new Set(ip.map((p) => p.date)).size;
+    const nIp = ip.length;
+
+    if (iperfSitesTr.length && nIp && trendIperfCanvas) {
+      const useDaily = distinctDaysIp >= 2;
+      const useSixHour = !useDaily && nIp >= 10;
+
+      if (useDaily) {
+        const dates = [...new Set(ip.map((p) => p.date))].sort();
+        const labels = dates.map(formatDateShort);
+        const datasets = iperfSitesTr.map((site, i) => {
+          const byDay: Record<string, number[]> = {};
+          ip.filter((p) => p.site === site).forEach((p) => {
+            if (p.bits_per_sec == null) return;
+            if (!byDay[p.date]) byDay[p.date] = [];
+            byDay[p.date].push(p.bits_per_sec);
+          });
+          return {
+            label: site,
+            data: dates.map((d) => {
+              const arr = byDay[d];
+              return arr?.length ? trendMean(arr) : null;
+            }),
+            ...trendDatasetShell(i, 0.35, 2),
+          };
+        });
+        trendIperfChart = renderChart(trendIperfCanvas, labels, datasets, 'bits_per_sec', 'Throughput (Mbps)', 'trend');
+        hints.push(
+          `iperf3: daily average across ${distinctDaysIp} day(s) (${nIp} run${nIp === 1 ? '' : 's'}).`
+        );
+      } else if (useSixHour) {
+        const msList = [
+          ...new Set(
+            ip
+              .map((p) => sixHourFloorMsFromTrendPoint(p))
+              .filter((x): x is number => x != null)
+          ),
+        ].sort((a, b) => a - b);
+        const labels = msList.map((ms) => formatDateTimeShort(new Date(ms).toISOString()));
+        const datasets = iperfSitesTr.map((site, i) => {
+          const bucketVals: Record<string, number[]> = {};
+          ip.filter((p) => p.site === site).forEach((p) => {
+            const ms = sixHourFloorMsFromTrendPoint(p);
+            if (ms == null || p.bits_per_sec == null) return;
+            const k = String(ms);
+            if (!bucketVals[k]) bucketVals[k] = [];
+            bucketVals[k].push(p.bits_per_sec);
+          });
+          return {
+            label: site,
+            data: msList.map((ms) => {
+              const arr = bucketVals[String(ms)];
+              return arr?.length ? trendMean(arr) : null;
+            }),
+            ...trendDatasetShell(i, 0.3, 2),
+          };
+        });
+        trendIperfChart = renderChart(trendIperfCanvas, labels, datasets, 'bits_per_sec', 'Throughput (Mbps)', 'trend');
+        hints.push(`iperf3: 6-hour averages (${nIp} run${nIp === 1 ? '' : 's'}).`);
+      } else {
+        const sortKeys = [...new Set(ip.map(historyTrendSortKey))].sort(
+          (a, b) => new Date(a).getTime() - new Date(b).getTime()
+        );
+        const labels = sortKeys.map((k) => {
+          const ms = new Date(k).getTime();
+          return Number.isNaN(ms) ? k : formatDateTimeShort(k);
+        });
+        const datasets = iperfSitesTr.map((site, i) => {
+          const byKey: Record<string, number> = {};
+          ip.filter((p) => p.site === site).forEach((p) => {
+            if (p.bits_per_sec != null) byKey[historyTrendSortKey(p)] = p.bits_per_sec;
+          });
+          return {
+            label: site,
+            data: sortKeys.map((k) => (k in byKey ? byKey[k] : null)),
+            ...trendDatasetShell(i, 0.22, 0),
+          };
+        });
+        trendIperfChart = renderChart(trendIperfCanvas, labels, datasets, 'bits_per_sec', 'Throughput (Mbps)', 'trend');
+        if (nIp > 1) hints.push(`iperf3: one point per run (${nIp} total).`);
+      }
+    }
+
+    trendAggHint = hints.join(' ');
   }
 
   async function loadData() {
@@ -748,7 +1079,7 @@
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No Speedtest data for this date. Use <strong>Run test now</strong> or the <strong>Scheduler</strong> to run tests.</p></div>
       {:else}
         <div class="chart-wrap chart-fixed"><canvas bind:this={downloadCanvas}></canvas></div>
-        <p class="small text-muted mt-2 mb-0">All sites over time. Drag to pan, scroll to zoom. Click legend to toggle.</p>
+        <p class="small text-muted mt-2 mb-0">All sites on one timeline. Busy days use one average per <strong>local hour</strong> so hourly tests don’t look noisy. Drag to pan, scroll to zoom.</p>
       {/if}
     </div>
   </section>
@@ -763,7 +1094,7 @@
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No Speedtest data for this date.</p></div>
       {:else}
         <div class="chart-wrap chart-fixed"><canvas bind:this={uploadCanvas}></canvas></div>
-        <p class="small text-muted mt-2 mb-0">All sites over time. Click legend to toggle.</p>
+        <p class="small text-muted mt-2 mb-0">Same timeline as download — hourly averages when there are many runs. Click legend to toggle.</p>
       {/if}
     </div>
   </section>
@@ -778,7 +1109,7 @@
         <div class="chart-placeholder chart-fixed"><p class="text-muted mb-0">No Speedtest data for this date.</p></div>
       {:else}
         <div class="chart-wrap chart-fixed"><canvas bind:this={latencyCanvas}></canvas></div>
-        <p class="small text-muted mt-2 mb-0">All sites over time. Click legend to toggle.</p>
+        <p class="small text-muted mt-2 mb-0">Same timeline — hourly smoothing when busy. Click legend to toggle.</p>
       {/if}
     </div>
   </section>
@@ -787,7 +1118,7 @@
   <section class="card mb-4">
     <div class="card-header text-dark">iperf3 throughput</div>
     <div class="card-body">
-      <p class="small text-muted mb-2">Chart shows combined (end-of-test) result per run. Use <strong>Download CSV</strong> above for full interval data.</p>
+      <p class="small text-muted mb-2">End-of-test throughput per run. Busy days are averaged per <strong>local hour</strong> like Speedtest. Use <strong>Download CSV</strong> for raw intervals.</p>
       {#if !selectedDate}
         <div class="chart-placeholder">
           <p class="text-muted mb-0">Select a date above to load graphs.</p>
@@ -806,7 +1137,7 @@
             <canvas bind:this={iperfCanvas}></canvas>
           </div>
         </div>
-        <p class="small text-muted mt-2 mb-0">Combined graph over time — all iperf series. Click legend to toggle.</p>
+        <p class="small text-muted mt-2 mb-0">All iperf series on one timeline. Click legend to toggle.</p>
       {/if}
     </div>
   </section>
@@ -826,6 +1157,11 @@
         <button type="button" class="btn btn-sm btn-outline-secondary" on:click={loadHistory} disabled={historyLoading}>{historyLoading ? 'Loading…' : 'Refresh'}</button>
       </div>
     </div>
+    {#if trendAggHint}
+      <div class="card-body pt-0 pb-2 px-3 border-top border-light-subtle">
+        <p class="small text-muted mb-0">{trendAggHint}</p>
+      </div>
+    {/if}
   </div>
 
   <section class="card mb-4 trend-card">
