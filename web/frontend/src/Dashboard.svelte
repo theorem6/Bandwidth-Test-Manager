@@ -5,7 +5,7 @@
   import { getDates, getData, getHealth, getBase, getRunStatus, getHistory, authHeaders, getExportCsvBlob, getSummaryCsvBlob } from './lib/api';
 
   Chart.register(zoomPlugin);
-  import { formatValue, formatDate, formatDateShort, formatDateTimeShort } from './lib/format';
+  import { formatValue, formatDate, formatDateShort, formatDateTime, formatChartAxisTime } from './lib/format';
   import { loading } from './lib/stores';
   import type { SpeedtestPoint, IperfPoint, DataResponse, HistoryResponse } from './lib/api';
 
@@ -41,6 +41,15 @@
   let trendIperfChart: Chart | null = null;
   /* Modern palette: distinct, accessible colors for time-series (2–3px lines, gradient fill) */
   const COLORS = ['#2563eb', '#059669', '#7c3aed', '#dc2626', '#ea580c', '#0891b2', '#65a30d', '#4f46e5', '#be185d', '#0d9488'];
+  /** Keep time-series charts readable on dense schedules (e.g. sub-minute data). */
+  const CHART_DENSITY_POINTS = {
+    low: 120,
+    balanced: 220,
+    high: 400,
+  } as const;
+  const CHART_DENSITY_KEY = 'netperf-chart-density';
+  const BUCKET_STEPS_MS = [60_000, 2 * 60_000, 5 * 60_000, 10 * 60_000, 15 * 60_000, 30 * 60_000, 60 * 60_000];
+  let chartDensity: keyof typeof CHART_DENSITY_POINTS = 'balanced';
 
   /** Hex to rgba for gradient stops (e.g. #2563eb -> rgba(37,99,235,0.2)) */
   function hexToRgba(hex: string, alpha: number): string {
@@ -50,6 +59,42 @@
     const g = parseInt(m[2], 16);
     const b = parseInt(m[3], 16);
     return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  function getTargetPointCount(): number {
+    return CHART_DENSITY_POINTS[chartDensity] ?? CHART_DENSITY_POINTS.balanced;
+  }
+
+  function chooseBucketMs(rangeMs: number, maxPoints: number): number {
+    const wanted = Math.max(1, Math.ceil(rangeMs / maxPoints));
+    for (const step of BUCKET_STEPS_MS) {
+      if (step >= wanted) return step;
+    }
+    const hour = 60 * 60_000;
+    return Math.ceil(wanted / hour) * hour;
+  }
+
+  function aggregateToBuckets(points: { x: number; y: number }[], bucketMs: number, maxPoints: number): { x: number; y: number }[] {
+    if (points.length <= maxPoints || bucketMs <= 1) return points;
+    const sorted = [...points].sort((a, b) => a.x - b.x);
+    const acc = new Map<number, { sum: number; count: number; lastX: number }>();
+    for (const p of sorted) {
+      const bucketStart = Math.floor(p.x / bucketMs) * bucketMs;
+      const cur = acc.get(bucketStart);
+      if (!cur) {
+        acc.set(bucketStart, { sum: p.y, count: 1, lastX: p.x });
+      } else {
+        cur.sum += p.y;
+        cur.count += 1;
+        cur.lastX = p.x;
+      }
+    }
+    return Array.from(acc.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([bucketStart, v]) => ({
+        x: Math.min(v.lastX, bucketStart + bucketMs / 2),
+        y: v.sum / v.count,
+      }));
   }
 
   let downloadCanvas: HTMLCanvasElement;
@@ -102,42 +147,72 @@
     return out;
   }
 
-  /** Combined over time: all sites, x = sorted timestamps. If extendToNow (and viewing today), add current time so line holds last speed to now. */
+  type ChartDatasetStyle = {
+    label: string;
+    borderColor: string;
+    backgroundColor: string;
+    borderWidth: number;
+    fill: boolean;
+    tension: number;
+    pointRadius: number;
+    pointHoverRadius: number;
+    showLine: boolean;
+    spanGaps: boolean;
+  };
+
+  /** Per-site line style + numeric y[] (category x) or {x,y}[] (real time axis). */
+  type BuiltLineDataset = ChartDatasetStyle & { data: (number | null)[] | { x: number; y: number }[] };
+
+  /** Hourly cron + multiple Ookla sites → uneven timestamps; use linear time x-axis for human-readable spacing. */
   function buildSpeedtestOverTime(
     data: Record<string, SpeedtestPoint[]>,
     key: 'download_bps' | 'upload_bps' | 'latency_ms',
     extendToNow = false
-  ) {
+  ):
+    | { kind: 'time'; xMin: number; xMax: number; datasets: BuiltLineDataset[] }
+    | { kind: 'category'; labels: string[]; datasets: BuiltLineDataset[] } {
     const sites = Object.keys(data).filter((site) => (data[site] || []).length > 0);
-    if (sites.length === 0) return { labels: [] as string[], datasets: [] };
+    if (sites.length === 0) return { kind: 'category', labels: [], datasets: [] };
 
     const allPoints = sites.flatMap((site) => (data[site] || []).map((p) => ({ ...p, site })));
     const hasTimestamps = allPoints.some((p) => p.timestamp && String(p.timestamp).trim());
 
     if (hasTimestamps) {
-      const timeSet = new Set<string>();
-      allPoints.forEach((p) => {
-        if (p.timestamp && String(p.timestamp).trim()) timeSet.add(p.timestamp);
-      });
-      if (extendToNow) timeSet.add(new Date().toISOString());
-      const labels = Array.from(timeSet).sort();
-      const displayLabels = labels.map(formatDateTimeShort);
-      const datasets = sites.map((site, i) => {
-        const valueByTime: Record<string, number> = {};
-        (data[site] || []).forEach((p) => {
+      const allTimes: number[] = [];
+      for (const p of allPoints) {
+        const ts = p.timestamp ? new Date(p.timestamp).getTime() : NaN;
+        if (!Number.isNaN(ts)) allTimes.push(ts);
+      }
+      if (allTimes.length === 0) return { kind: 'category', labels: [], datasets: [] };
+      const nowMs = Date.now();
+      const globalMin = Math.min(...allTimes);
+      const globalMax = Math.max(...allTimes, extendToNow ? nowMs : -Infinity);
+      const maxPoints = getTargetPointCount();
+      const bucketMs = chooseBucketMs(Math.max(1, globalMax - globalMin), maxPoints);
+      const datasets: BuiltLineDataset[] = [];
+      let colorIdx = 0;
+      for (const site of sites) {
+        const byMs: Record<number, number> = {};
+        for (const p of data[site] || []) {
+          const ts = p.timestamp ? new Date(p.timestamp).getTime() : NaN;
           const v = (p as unknown as Record<string, number>)[key];
-          if (p.timestamp != null && v != null) valueByTime[p.timestamp] = v;
-        });
-        let values = labels.map((t) => valueByTime[t] ?? null);
-        if (extendToNow && values.length > 0) {
-          const lastKnown = [...values].reverse().find((v) => v != null);
-          if (lastKnown != null) values[values.length - 1] = lastKnown;
+          if (!Number.isNaN(ts) && v != null) byMs[ts] = v;
         }
-        return {
+        const times = Object.keys(byMs)
+          .map(Number)
+          .sort((a, b) => a - b);
+        const pts: { x: number; y: number }[] = times.map((t) => ({ x: t, y: byMs[t] }));
+        const compactPts = aggregateToBuckets(pts, bucketMs, maxPoints);
+        if (extendToNow && compactPts.length > 0) {
+          const last = compactPts[compactPts.length - 1];
+          compactPts.push({ x: nowMs, y: last.y });
+        }
+        if (compactPts.length === 0) continue;
+        datasets.push({
           label: site,
-          data: values,
-          borderColor: COLORS[i % COLORS.length],
-          backgroundColor: COLORS[i % COLORS.length] + '30',
+          data: compactPts,
+          borderColor: COLORS[colorIdx % COLORS.length],
+          backgroundColor: COLORS[colorIdx % COLORS.length] + '30',
           borderWidth: 3,
           fill: true,
           tension: 0,
@@ -145,12 +220,23 @@
           pointHoverRadius: 6,
           showLine: true,
           spanGaps: true,
-        };
-      });
-      return { labels: displayLabels, datasets };
+        });
+        colorIdx += 1;
+      }
+      if (datasets.length === 0) return { kind: 'category', labels: [], datasets: [] };
+      let xMin = Infinity;
+      let xMax = -Infinity;
+      for (const ds of datasets) {
+        for (const p of ds.data as { x: number; y: number }[]) {
+          xMin = Math.min(xMin, p.x);
+          xMax = Math.max(xMax, p.x);
+        }
+      }
+      const span = xMax - xMin;
+      const pad = Math.max(span * 0.04, 2 * 60 * 1000);
+      return { kind: 'time', xMin: xMin - pad, xMax: xMax + pad, datasets };
     }
 
-    // No timestamps: use Run 1, Run 2, ... so graph still draws
     const maxLen = Math.max(0, ...sites.map((k) => (data[k] || []).length));
     const runLabels = Array.from({ length: maxLen }, (_, i) => `Run ${i + 1}`);
     const datasets = sites.map((site, i) => {
@@ -170,37 +256,55 @@
         spanGaps: true,
       };
     });
-    return { labels: runLabels, datasets };
+    return { kind: 'category', labels: runLabels, datasets };
   }
 
-  /** Combined over time: all iperf series. If extendToNow (viewing today), line holds last value to now. */
-  function buildIperfOverTime(data: Record<string, IperfPoint[]>, extendToNow = false) {
+  function buildIperfOverTime(
+    data: Record<string, IperfPoint[]>,
+    extendToNow = false
+  ):
+    | { kind: 'time'; xMin: number; xMax: number; datasets: BuiltLineDataset[] }
+    | { kind: 'category'; labels: string[]; datasets: BuiltLineDataset[] } {
     const sites = Object.keys(data).filter((k) => (data[k] || []).length > 0);
     const allPoints = sites.flatMap((site) => (data[site] || []).map((p) => ({ ...p, site })));
     const hasTimestamps = allPoints.some((p) => p.timestamp);
     if (hasTimestamps) {
-      const timeSet = new Set<string>();
-      allPoints.forEach((p) => {
-        if (p.timestamp) timeSet.add(p.timestamp);
-      });
-      if (extendToNow) timeSet.add(new Date().toISOString());
-      const labels = Array.from(timeSet).sort();
-      const displayLabels = labels.map(formatDateTimeShort);
-      const datasets = sites.map((site, i) => {
-        const valueByTime: Record<string, number> = {};
-        (data[site] || []).forEach((p) => {
-          if (p.timestamp != null && p.bits_per_sec != null) valueByTime[p.timestamp] = p.bits_per_sec;
-        });
-        let values = labels.map((t) => valueByTime[t] ?? null);
-        if (extendToNow && values.length > 0) {
-          const lastKnown = [...values].reverse().find((v) => v != null);
-          if (lastKnown != null) values[values.length - 1] = lastKnown;
+      const allTimes: number[] = [];
+      for (const p of allPoints) {
+        if (!p.timestamp) continue;
+        const ts = new Date(p.timestamp).getTime();
+        if (!Number.isNaN(ts)) allTimes.push(ts);
+      }
+      if (allTimes.length === 0) return { kind: 'category', labels: [], datasets: [] };
+      const nowMs = Date.now();
+      const globalMin = Math.min(...allTimes);
+      const globalMax = Math.max(...allTimes, extendToNow ? nowMs : -Infinity);
+      const maxPoints = getTargetPointCount();
+      const bucketMs = chooseBucketMs(Math.max(1, globalMax - globalMin), maxPoints);
+      const datasets: BuiltLineDataset[] = [];
+      let colorIdx = 0;
+      for (const site of sites) {
+        const byMs: Record<number, number> = {};
+        for (const p of data[site] || []) {
+          if (p.timestamp == null || p.bits_per_sec == null) continue;
+          const ts = new Date(p.timestamp).getTime();
+          if (!Number.isNaN(ts)) byMs[ts] = p.bits_per_sec;
         }
-        return {
+        const times = Object.keys(byMs)
+          .map(Number)
+          .sort((a, b) => a - b);
+        const pts: { x: number; y: number }[] = times.map((t) => ({ x: t, y: byMs[t] }));
+        const compactPts = aggregateToBuckets(pts, bucketMs, maxPoints);
+        if (extendToNow && compactPts.length > 0) {
+          const last = compactPts[compactPts.length - 1];
+          compactPts.push({ x: nowMs, y: last.y });
+        }
+        if (compactPts.length === 0) continue;
+        datasets.push({
           label: site,
-          data: values,
-          borderColor: COLORS[i % COLORS.length],
-          backgroundColor: COLORS[i % COLORS.length] + '30',
+          data: compactPts,
+          borderColor: COLORS[colorIdx % COLORS.length],
+          backgroundColor: COLORS[colorIdx % COLORS.length] + '30',
           borderWidth: 3,
           fill: true,
           tension: 0,
@@ -208,9 +312,21 @@
           pointHoverRadius: 6,
           showLine: true,
           spanGaps: true,
-        };
-      });
-      return { labels: displayLabels, datasets };
+        });
+        colorIdx += 1;
+      }
+      if (datasets.length === 0) return { kind: 'category', labels: [], datasets: [] };
+      let xMin = Infinity;
+      let xMax = -Infinity;
+      for (const ds of datasets) {
+        for (const p of ds.data as { x: number; y: number }[]) {
+          xMin = Math.min(xMin, p.x);
+          xMax = Math.max(xMax, p.x);
+        }
+      }
+      const span = xMax - xMin;
+      const pad = Math.max(span * 0.04, 2 * 60 * 1000);
+      return { kind: 'time', xMin: xMin - pad, xMax: xMax + pad, datasets };
     }
     const maxLen = Math.max(0, ...sites.map((k) => (data[k] || []).length));
     const runLabels = Array.from({ length: maxLen }, (_, i) => `Run ${i + 1}`);
@@ -231,7 +347,7 @@
         spanGaps: true,
       };
     });
-    return { labels: runLabels, datasets };
+    return { kind: 'category', labels: runLabels, datasets };
   }
 
   $: filteredSpeedtestData = selectedDate ? filterByTimeRange(speedtestData, selectedDate, timeRangeFilter) : speedtestData;
@@ -243,16 +359,8 @@
   $: hasIperf = iperfSites.length > 0;
   $: hasAnyData = hasSpeedtest || hasIperf;
 
-  function renderChart(
-    canvas: HTMLCanvasElement | undefined,
-    labels: string[],
-    datasets: { label: string; data: (number | null)[]; borderColor: string; backgroundColor: string; fill: boolean; tension: number; pointRadius: number; pointHoverRadius: number; borderWidth?: number }[],
-    metric: string,
-    metricLabel: string
-  ): Chart | null {
-    if (!canvas || !datasets.length) return null;
-    /* Modern style: vertical gradient fill (line color → transparent), 3px line, no points by default */
-    const datasetsWithGradient = datasets.map((ds) => ({
+  function withLineGradient(datasets: BuiltLineDataset[]) {
+    return datasets.map((ds) => ({
       ...ds,
       borderWidth: ds.borderWidth ?? 3,
       backgroundColor: (context: { chart: Chart }) => {
@@ -266,6 +374,18 @@
         return gradient;
       },
     }));
+  }
+
+  /** Trend / “Run N” charts: category x-axis. */
+  function renderChart(
+    canvas: HTMLCanvasElement | undefined,
+    labels: string[],
+    datasets: BuiltLineDataset[],
+    metric: string,
+    metricLabel: string
+  ): Chart | null {
+    if (!canvas || !datasets.length) return null;
+    const datasetsWithGradient = withLineGradient(datasets);
     return new Chart(canvas, {
       type: 'line',
       data: { labels, datasets: datasetsWithGradient },
@@ -298,7 +418,82 @@
         scales: {
           x: {
             grid: { display: true, color: 'rgba(0,0,0,0.08)' },
-            ticks: { maxRotation: 45, maxTicksLimit: 14, font: { size: 12 } },
+            ticks: { maxRotation: 45, maxTicksLimit: 12, autoSkip: true, font: { size: 12 } },
+          },
+          y: {
+            beginAtZero: metric !== 'latency_ms',
+            title: { display: true, text: metricLabel, font: { size: 13 } },
+            grid: { display: true, color: 'rgba(0,0,0,0.08)' },
+            ticks: { font: { size: 12 } },
+          },
+        },
+      },
+    });
+  }
+
+  /** Day-view speedtest/iperf: linear time x (ms) so hourly / multi-site spacing matches real time. */
+  function renderTimeSeriesChart(
+    canvas: HTMLCanvasElement | undefined,
+    datasets: BuiltLineDataset[],
+    metric: string,
+    metricLabel: string,
+    xMin: number,
+    xMax: number
+  ): Chart | null {
+    if (!canvas || !datasets.length) return null;
+    const rangeMs = xMax - xMin;
+    const datasetsWithGradient = withLineGradient(datasets);
+    return new Chart(canvas, {
+      type: 'line',
+      data: { datasets: datasetsWithGradient },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        elements: { line: { spanGaps: true } },
+        datasets: { line: { showLine: true } },
+        interaction: { intersect: false, mode: 'nearest', axis: 'x' },
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { font: { size: 13 }, padding: 14, usePointStyle: false },
+            onClick(_e: unknown, legendItem: { datasetIndex?: number }, legend: { chart: Chart }) {
+              const idx = legendItem.datasetIndex ?? 0;
+              const meta = legend.chart.getDatasetMeta(idx);
+              meta.hidden = meta.hidden !== true;
+              legend.chart.update();
+            },
+          },
+          tooltip: {
+            callbacks: {
+              title(tooltipItems) {
+                const x = tooltipItems[0]?.parsed?.x;
+                if (x == null || typeof x !== 'number') return '';
+                return formatDateTime(new Date(x).toISOString());
+              },
+              label(ctx: { dataset: { label?: string }; parsed: { y: number | null } }) {
+                return (ctx.dataset.label || '') + ': ' + formatValue(ctx.parsed.y, metric);
+              },
+            },
+          },
+          zoom: {
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+            pan: { enabled: true, mode: 'x' },
+            limits: { x: { min: 'original', max: 'original' } },
+          },
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min: xMin,
+            max: xMax,
+            grid: { display: true, color: 'rgba(0,0,0,0.08)' },
+            ticks: {
+              maxRotation: 0,
+              autoSkip: true,
+              maxTicksLimit: 10,
+              font: { size: 12 },
+              callback: (v: string | number) => formatChartAxisTime(Number(v), rangeMs),
+            },
           },
           y: {
             beginAtZero: metric !== 'latency_ms',
@@ -325,27 +520,35 @@
     if (latencyChartInst) { latencyChartInst.destroy(); latencyChartInst = null; }
     if (iperfChartInst) { iperfChartInst.destroy(); iperfChartInst = null; }
     if (downloadCanvas && hasSpeedtest) {
-      const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'download_bps', extendToNow);
-      if (labels.length && datasets.length) {
-        downloadChartInst = renderChart(downloadCanvas, labels, datasets, 'download_bps', 'Download (Mbps)');
+      const built = buildSpeedtestOverTime(filteredSpeedtestData, 'download_bps', extendToNow);
+      if (built.kind === 'time' && built.datasets.length) {
+        downloadChartInst = renderTimeSeriesChart(downloadCanvas, built.datasets, 'download_bps', 'Download (Mbps)', built.xMin, built.xMax);
+      } else if (built.kind === 'category' && built.labels.length && built.datasets.length) {
+        downloadChartInst = renderChart(downloadCanvas, built.labels, built.datasets, 'download_bps', 'Download (Mbps)');
       }
     }
     if (uploadCanvas && hasSpeedtest) {
-      const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'upload_bps', extendToNow);
-      if (labels.length && datasets.length) {
-        uploadChartInst = renderChart(uploadCanvas, labels, datasets, 'upload_bps', 'Upload (Mbps)');
+      const built = buildSpeedtestOverTime(filteredSpeedtestData, 'upload_bps', extendToNow);
+      if (built.kind === 'time' && built.datasets.length) {
+        uploadChartInst = renderTimeSeriesChart(uploadCanvas, built.datasets, 'upload_bps', 'Upload (Mbps)', built.xMin, built.xMax);
+      } else if (built.kind === 'category' && built.labels.length && built.datasets.length) {
+        uploadChartInst = renderChart(uploadCanvas, built.labels, built.datasets, 'upload_bps', 'Upload (Mbps)');
       }
     }
     if (latencyCanvas && hasSpeedtest) {
-      const { labels, datasets } = buildSpeedtestOverTime(filteredSpeedtestData, 'latency_ms', extendToNow);
-      if (labels.length && datasets.length) {
-        latencyChartInst = renderChart(latencyCanvas, labels, datasets, 'latency_ms', 'Latency (ms)');
+      const built = buildSpeedtestOverTime(filteredSpeedtestData, 'latency_ms', extendToNow);
+      if (built.kind === 'time' && built.datasets.length) {
+        latencyChartInst = renderTimeSeriesChart(latencyCanvas, built.datasets, 'latency_ms', 'Latency (ms)', built.xMin, built.xMax);
+      } else if (built.kind === 'category' && built.labels.length && built.datasets.length) {
+        latencyChartInst = renderChart(latencyCanvas, built.labels, built.datasets, 'latency_ms', 'Latency (ms)');
       }
     }
     if (iperfCanvas && hasIperf) {
-      const { labels, datasets } = buildIperfOverTime(filteredIperfData, extendToNow);
-      if (labels.length && datasets.length) {
-        iperfChartInst = renderChart(iperfCanvas, labels, datasets, 'bits_per_sec', 'Throughput (Mbps)');
+      const built = buildIperfOverTime(filteredIperfData, extendToNow);
+      if (built.kind === 'time' && built.datasets.length) {
+        iperfChartInst = renderTimeSeriesChart(iperfCanvas, built.datasets, 'bits_per_sec', 'Throughput (Mbps)', built.xMin, built.xMax);
+      } else if (built.kind === 'category' && built.labels.length && built.datasets.length) {
+        iperfChartInst = renderChart(iperfCanvas, built.labels, built.datasets, 'bits_per_sec', 'Throughput (Mbps)');
       }
     }
   }
@@ -366,8 +569,8 @@
       });
     });
   }
-  /* Depend on data and time filter so charts refresh when data or range changes. */
-  $: dataVersion = { s: speedtestData, i: iperfData, range: timeRangeFilter, date: selectedDate };
+  /* Depend on data, filters, and chart density so charts refresh when controls change. */
+  $: dataVersion = { s: speedtestData, i: iperfData, range: timeRangeFilter, date: selectedDate, density: chartDensity };
   $: if (selectedDate && dataVersion) void updateCharts();
 
   async function checkConnection() {
@@ -612,9 +815,14 @@
   else { speedtestData = {}; iperfData = {}; }
 
   onMount(() => {
+    const savedDensity = localStorage.getItem(CHART_DENSITY_KEY);
+    if (savedDensity === 'low' || savedDensity === 'balanced' || savedDensity === 'high') {
+      chartDensity = savedDensity;
+    }
     loadDatesList();
     loadHistory();
   });
+  $: if (typeof window !== 'undefined') localStorage.setItem(CHART_DENSITY_KEY, chartDensity);
   onDestroy(() => {
     stopRunNowPoll();
     [downloadChartInst, uploadChartInst, latencyChartInst, iperfChartInst, trendDownloadChart, trendUploadChart, trendLatencyChart, trendIperfChart].forEach((c) => { if (c) c.destroy(); });
@@ -645,6 +853,12 @@
             <option value="full">Full day</option>
             <option value="12h">Last 12 hours</option>
             <option value="6h">Last 6 hours</option>
+          </select>
+          <label for="dashboard-chart-density" class="form-label mb-0 small text-muted ms-2">Detail</label>
+          <select id="dashboard-chart-density" class="form-select form-select-sm" style="max-width:120px" bind:value={chartDensity} title="Higher detail shows more points and may look busier">
+            <option value="low">Low</option>
+            <option value="balanced">Balanced</option>
+            <option value="high">High</option>
           </select>
           <button type="button" class="btn btn-sm btn-outline-secondary ms-1" on:click={resetChartsZoom} title="Reset pan/zoom to full view">Reset zoom</button>
         {/if}
