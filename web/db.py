@@ -198,6 +198,49 @@ def get_speedtest_for_date(storage: Path, log_date: str, probe_id: Optional[str]
             out[site] = []
         out[site].append({
             "timestamp": ts or "",
+            "log_date": log_date,
+            "download_bps": down,
+            "upload_bps": up,
+            "latency_ms": lat,
+        })
+    return out
+
+
+def get_speedtest_for_range(
+    storage: Path, from_ymd: str, to_ymd: str, probe_id: Optional[str] = None
+) -> dict[str, list[dict[str, Any]]]:
+    """Return { site: [ points ] } for log_date in [from_ymd, to_ymd] inclusive. Each point includes log_date."""
+    conn = _get_conn(storage)
+    try:
+        if probe_id:
+            rows = conn.execute(
+                """
+                SELECT site, timestamp, download_bps, upload_bps, latency_ms, log_date
+                FROM speedtest_results
+                WHERE log_date >= ? AND log_date <= ? AND (probe_id = ? OR probe_id = '' OR probe_id IS NULL)
+                ORDER BY log_date, timestamp, site
+                """,
+                (from_ymd, to_ymd, probe_id or ""),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT site, timestamp, download_bps, upload_bps, latency_ms, log_date
+                FROM speedtest_results
+                WHERE log_date >= ? AND log_date <= ?
+                ORDER BY log_date, timestamp, site
+                """,
+                (from_ymd, to_ymd),
+            ).fetchall()
+    finally:
+        conn.close()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for site, ts, down, up, lat, ld in rows:
+        if site not in out:
+            out[site] = []
+        out[site].append({
+            "timestamp": ts or "",
+            "log_date": ld,
             "download_bps": down,
             "upload_bps": up,
             "latency_ms": lat,
@@ -232,7 +275,43 @@ def get_iperf_for_date(storage: Path, log_date: str, probe_id: Optional[str] = N
     for site, ts, bps in rows:
         if site not in out:
             out[site] = []
-        out[site].append({"timestamp": ts or "", "bits_per_sec": bps})
+        out[site].append({"timestamp": ts or "", "log_date": log_date, "bits_per_sec": bps})
+    return out
+
+
+def get_iperf_for_range(
+    storage: Path, from_ymd: str, to_ymd: str, probe_id: Optional[str] = None
+) -> dict[str, list[dict[str, Any]]]:
+    """Return { site: [ points ] } for log_date in [from_ymd, to_ymd] inclusive."""
+    conn = _get_conn(storage)
+    try:
+        if probe_id:
+            rows = conn.execute(
+                """
+                SELECT site, timestamp, bits_per_sec, log_date
+                FROM iperf_results
+                WHERE log_date >= ? AND log_date <= ? AND (probe_id = ? OR probe_id = '' OR probe_id IS NULL)
+                ORDER BY log_date, timestamp, site
+                """,
+                (from_ymd, to_ymd, probe_id or ""),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT site, timestamp, bits_per_sec, log_date
+                FROM iperf_results
+                WHERE log_date >= ? AND log_date <= ?
+                ORDER BY log_date, timestamp, site
+                """,
+                (from_ymd, to_ymd),
+            ).fetchall()
+    finally:
+        conn.close()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for site, ts, bps, ld in rows:
+        if site not in out:
+            out[site] = []
+        out[site].append({"timestamp": ts or "", "log_date": ld, "bits_per_sec": bps})
     return out
 
 

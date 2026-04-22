@@ -199,8 +199,17 @@ export async function getData(date: string, probeId?: string): Promise<DataRespo
   return fetchApi(url, { cache: 'no-store' });
 }
 
+/** Main dashboard charts: window ending at **end** (YYYYMMDD). Imports each day in range into SQLite. */
+export async function getDataRange(end: string, span: ChartSpan, probeId?: string): Promise<DataRangeResponse> {
+  const q = new URLSearchParams({ end, span });
+  if (probeId?.trim()) q.set('probe_id', probeId.trim());
+  return fetchApi<DataRangeResponse>(`/api/data-range?${q.toString()}`, { cache: 'no-store' });
+}
+
 export interface SpeedtestPoint {
   timestamp: string;
+  /** Log folder date YYYYMMDD (set for range queries and single-day API). */
+  log_date?: string;
   download_bps?: number;
   upload_bps?: number;
   latency_ms?: number;
@@ -209,11 +218,18 @@ export interface SpeedtestPoint {
 export interface IperfPoint {
   bits_per_sec: number;
   timestamp?: string;
+  log_date?: string;
 }
 
 export interface DataResponse {
   speedtest: Record<string, SpeedtestPoint[]>;
   iperf: Record<string, IperfPoint[]>;
+}
+
+export type ChartSpan = 'day' | 'week' | 'month' | 'year';
+
+export interface DataRangeResponse extends DataResponse {
+  range: { from: string; to: string; span: ChartSpan; end: string } | null;
 }
 
 export interface HistorySpeedtestPoint {
@@ -239,7 +255,7 @@ export interface HistoryResponse {
 
 export async function getHistory(days?: number, probeId?: string): Promise<HistoryResponse> {
   const params = new URLSearchParams();
-  if (days != null) params.set('days', String(days));
+  if (days != null) params.set('days', String(Math.min(366, Math.max(1, days))));
   if (probeId?.trim()) params.set('probe_id', probeId.trim());
   const q = params.toString() ? `?${params.toString()}` : '';
   return fetchApi<HistoryResponse>(`/api/history${q}`);
