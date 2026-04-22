@@ -350,37 +350,43 @@ def _speedtest_result_to_point(obj: dict, require_type: bool = True) -> dict | N
     }
 
 
-def _split_json_objects(raw: str) -> list[dict]:
-    """Split concatenated JSON objects (e.g. multiple runs appended to one file). Returns list of dicts."""
+def _decode_json_stream(raw: str) -> list[dict]:
+    """Decode one or more JSON values from one string (JSONL or concatenated objects)."""
     out: list[dict] = []
-    # Try splitting by "}\s*{" to get separate objects
-    parts = re.split(r"\}\s*\{", raw.strip())
-    for i, part in enumerate(parts):
-        part = part.strip()
-        if not part:
-            continue
-        if not part.startswith("{"):
-            part = "{" + part
-        if not part.endswith("}"):
-            part = part + "}"
+    if not raw:
+        return out
+    dec = json.JSONDecoder()
+    n = len(raw)
+    i = 0
+    while i < n:
+        while i < n and raw[i].isspace():
+            i += 1
+        if i >= n:
+            break
         try:
-            obj = json.loads(part)
-            if isinstance(obj, dict):
-                out.append(obj)
-        except (json.JSONDecodeError, TypeError):
+            obj, end = dec.raw_decode(raw, i)
+        except json.JSONDecodeError:
+            i += 1
             continue
+        i = end
+        if isinstance(obj, dict):
+            out.append(obj)
+        elif isinstance(obj, list):
+            for item in obj:
+                if isinstance(item, dict):
+                    out.append(item)
     return out
 
 
 def parse_speedtest_file(path: Path) -> list:
-    """Parse Ookla speedtest -f json output (JSONL or concatenated JSON). Returns list of result points.
-    Handles multiple runs per file so all speedtests are saved, not just the last."""
+    """Parse Ookla speedtest -f json output and return parsed points.
+    Supports JSONL, one large JSON value, and concatenated objects without separators."""
     results = []
     try:
         raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return results
-    # 1) Line-by-line (JSONL: one result per line)
+    # 1) Line-by-line (common path when each run appends one JSON line)
     for line in raw.split("\n"):
         line = line.strip()
         if not line:
@@ -392,37 +398,16 @@ def parse_speedtest_file(path: Path) -> list:
                 results.append(pt)
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
-    # 2) If we got nothing, try splitting concatenated JSON objects (e.g. multiple runs in one file)
+    # 2) Decode any JSON stream structure from the full file text.
+    # This handles concatenated objects robustly (without regex splitting nested JSON).
     if not results and raw.strip():
-        for obj in _split_json_objects(raw):
+        for obj in _decode_json_stream(raw):
             pt = _speedtest_result_to_point(obj)
             if not pt:
                 pt = _speedtest_result_to_point(obj, require_type=False)
             if pt:
                 results.append(pt)
-    # 3) Whole file as single JSON (some CLI versions)
-    if not results and raw.strip():
-        try:
-            obj = json.loads(raw)
-            if isinstance(obj, dict):
-                pt = _speedtest_result_to_point(obj)
-                if pt:
-                    results.append(pt)
-                else:
-                    pt = _speedtest_result_to_point(obj, require_type=False)
-                    if pt:
-                        results.append(pt)
-            elif isinstance(obj, list):
-                for item in obj:
-                    if isinstance(item, dict):
-                        pt = _speedtest_result_to_point(item)
-                        if not pt:
-                            pt = _speedtest_result_to_point(item, require_type=False)
-                        if pt:
-                            results.append(pt)
-        except (json.JSONDecodeError, KeyError, TypeError):
-            pass
-    # 4) Lenient line-by-line fallback
+    # 3) Lenient line-by-line fallback for malformed lines that still contain useful keys.
     if not results and raw.strip():
         for line in raw.split("\n"):
             line = line.strip()
@@ -1742,6 +1727,58 @@ def api_data(date: Optional[str] = None, probe_id: Optional[str] = None):
         return JSONResponse({"speedtest": {}, "iperf": {}})
 
 
+def _range_from_end_ymd(end_ymd: str, span: str) -> tuple[str, str]:
+    """Inclusive [from, to] YYYYMMDD for chart window ending at end_ymd."""
+    end = datetime.strptime(end_ymd, "%Y%m%d").date()
+    if span == "week":
+        start = end - timedelta(days=6)
+    elif span == "month":
+        start = end - timedelta(days=29)
+    elif span == "year":
+        start = end - timedelta(days=364)
+    else:
+        start = end
+    return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+
+
+@app.get("/api/data-range")
+def api_data_range(end: Optional[str] = None, span: str = "day", probe_id: Optional[str] = None):
+    """Speedtest + iperf for a window ending at **end** (YYYYMMDD): day=1, week=7, month=30, year=365 calendar days."""
+    try:
+        if not end or len(end) != 8 or not end.isdigit():
+            return JSONResponse({"error": "missing or invalid end (YYYYMMDD)"}, status_code=400)
+        sp = (span or "day").lower()
+        if sp not in ("day", "week", "month", "year"):
+            sp = "day"
+        from_ymd, to_ymd = _range_from_end_ymd(end, sp)
+        db.init_db(STORAGE)
+        for ymd in _iter_ymd_range(from_ymd, to_ymd):
+            day_dir = STORAGE / ymd
+            if day_dir.is_dir():
+                _import_day_from_files(ymd)
+        pid = (probe_id or "").strip() or None
+        speedtest = db.get_speedtest_for_range(STORAGE, from_ymd, to_ymd, probe_id=pid)
+        iperf = db.get_iperf_for_range(STORAGE, from_ymd, to_ymd, probe_id=pid)
+        return JSONResponse(
+            {
+                "speedtest": speedtest,
+                "iperf": iperf,
+                "range": {"from": from_ymd, "to": to_ymd, "span": sp, "end": end},
+            }
+        )
+    except Exception:
+        return JSONResponse({"speedtest": {}, "iperf": {}, "range": None})
+
+
+def _iter_ymd_range(from_ymd: str, to_ymd: str):
+    a = datetime.strptime(from_ymd, "%Y%m%d").date()
+    b = datetime.strptime(to_ymd, "%Y%m%d").date()
+    d = a
+    while d <= b:
+        yield d.strftime("%Y%m%d")
+        d += timedelta(days=1)
+
+
 def _escape_csv(val: Any) -> str:
     if val is None:
         return ""
@@ -1826,7 +1863,8 @@ def api_history(days: int = 90, probe_id: Optional[str] = None):
     """Return time-series data for trend graphs. Optional probe_id filter for remote node view."""
     try:
         db.init_db(STORAGE)
-        cutoff = (datetime.now() - timedelta(days=min(days, 365))).strftime("%Y%m%d")
+        nd = max(1, min(int(days), 366))
+        cutoff = (datetime.now() - timedelta(days=nd)).strftime("%Y%m%d")
         if STORAGE.exists():
             for d in STORAGE.iterdir():
                 if d.is_dir() and d.name.isdigit() and d.name >= cutoff:
