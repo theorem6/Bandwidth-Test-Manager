@@ -1,6 +1,7 @@
 #!/bin/bash
 # Bandwidth Test Manager — full install (CLI + optional web UI)
 # Supports: Debian/Ubuntu, Fedora/RHEL/Rocky/Alma/Amazon Linux, openSUSE/SLES, Alpine, Arch.
+# Web bundle (web/main.py): speedtest log import accepts JSONL and concatenated Ookla JSON from netperf-tester.
 # With web UI: installs Node.js 18+, runs npm ci && npm run build in web/frontend (Vite → web/static/).
 # Run: sudo ./install.sh [--no-web]
 # Env: BWM_SOURCE=archive|git (default archive), BWM_REPO, BWM_REF, BWM_DEBUG=1,
